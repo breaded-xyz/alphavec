@@ -120,11 +120,23 @@ def test_spread():
 
 
 def test_borrow():
-    weights = pd.Series([0.5, -2.5])
-    prices = pd.Series([10, 10])
     rate = 0.1
     periods = 10
 
+    # Case: no borrowing
+    weights = pd.Series([0.5, 0.3])
+    prices = pd.Series([10, 10])
     act = av._borrow(weights, prices, rate, periods)
-    assert act.iloc[0] == 0  # Case: zero leverage
-    assert act.iloc[1].round(2) == 0.36  # Case: weight with leverage
+    assert act == 0
+
+    # Case: short side borrowing
+    weights = pd.Series([0.5, -0.3])
+    prices = pd.Series([10, 10])
+    act = av._borrow(weights, prices, rate, periods)
+    assert np.round(act, 2) == 0.03
+
+    # Case: dataframe handling
+    weights = pd.DataFrame({0: [0.5, 0], 1: [-0.3, 0]})
+    prices = pd.DataFrame({0: [10, 10], 1: [10, 10]})
+    act = av._borrow(weights, prices, rate, periods)
+    assert np.round(act.iloc[0], 2) == 0.03

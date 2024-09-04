@@ -486,15 +486,30 @@ def _borrow(
     prices: Union[pd.DataFrame, pd.Series],
     ann_borrow_rate: float = 0,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
-) -> Union[pd.DataFrame, pd.Series]:
-    """Calculate the borrowing costs for each position in the strategy."""
+) -> Union[pd.Series, float]:
+    """Calculate the borrowing costs (short and leveraged long) for each position in the strategy."""
+
     rate = _ann_to_period_rate(ann_borrow_rate, freq_year)
-    # Position value from absolute weights and prices
-    size = weights.abs().fillna(0)
-    value = size * prices
-    # Leverage is defined as an absolute weight > 1
-    # Zero for all other positions
-    lev = (size - 1).clip(lower=0)
-    # Costs are the product of the position value, rate and leverage
-    costs = value * rate * lev
+
+    # Short positions always incur borrowing costs
+    short_wts = weights.copy()
+    short_wts[short_wts >= 0] = 0
+    short_size = short_wts.abs().fillna(0)
+    short_value = short_size * prices
+    short_costs = short_value.T.sum() * rate
+
+    # Sum the positions to get the portfolio totals at each period
+    # To handle series and dataframes we transpose the rows (equiv. to axis=1)
+    long_wts = weights.copy()
+    long_wts[long_wts < 0] = 0
+    long_size = long_wts.abs().fillna(0).T.sum()
+    long_value = long_size * prices.T.sum()
+    # Leverage is applied when the sum of the absolute weights is greater than 1
+    # Must be a positive value
+    long_lev = np.maximum(0, long_size - 1)
+    long_costs = long_value * rate * long_lev
+
+    # Costs are the product of the portfolio value, borrow rate and leverage
+    costs = long_costs + short_costs
+
     return costs
