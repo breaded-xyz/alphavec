@@ -147,7 +147,7 @@ def backtest(
         shift_periods: Positive integer for n periods to shift returns relative to weights. Defaults to 1.
         commission_func: Function to calculate commission cost. Defaults to zero_commission.
         spread_pct: Spread cost as a decimal percentage. Defaults to 0.
-        ann_borrow_rate: Annualized borrowing rate applied when absolute asset weight > 1. Defaults to 0.
+        ann_borrow_rate: Annualized borrowing rate applied to short and leveraged long positions. Defaults to 0.
         ann_risk_free_rate: Annualized risk-free rate used to calculate Sharpe ratio. Defaults to 0.02.
         bootstrap_n: Number of bootstrap iterations to validate portfolio performance. Defaults to 1000.
 
@@ -199,10 +199,13 @@ def backtest(
     # 2. Evaluate asset-wise performance
     # 3. Evaluate portfolio performance
 
-    # Calc each cost component in percentage terms so we can
-    # deduct them from the strategy returns
+    # Calc each cost component in percentages to deduct from strategy returns
+    # Note: Borrow costs are calculated per asset on shorts and leveraged longs.
+    # Short and long positions are not netted off and the overall portfolio leverage is not considered.
     cmn_costs = commission_func(weights, prices) / prices
-    borrow_costs = _borrow(weights, prices, ann_borrow_rate, freq_day) / prices
+    borrow_costs = (
+        _borrow(weights, prices, ann_borrow_rate, freq_year=freq_year) / prices
+    )
     spread_costs = _spread(weights, prices, spread_pct) / prices
     costs = cmn_costs + borrow_costs + spread_costs
 
@@ -371,7 +374,7 @@ def _log_rets(
 
 
 def _ann_to_period_rate(ann_rate: float, periods_year: int) -> float:
-    """Calculate the annualized rate given the return periodocity."""
+    """Calculate the annualized compounding rate given the return periodocity."""
     return (1 + ann_rate) ** (1 / periods_year) - 1
 
 
@@ -486,30 +489,21 @@ def _borrow(
     prices: Union[pd.DataFrame, pd.Series],
     ann_borrow_rate: float = 0,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
-) -> Union[pd.Series, float]:
-    """Calculate the borrowing costs (short and leveraged long) for each position in the strategy."""
+) -> Union[pd.DataFrame, pd.Series]:
+    """Calculate borrowing costs (short and leveraged long) for each position in the strategy."""
 
     rate = _ann_to_period_rate(ann_borrow_rate, freq_year)
 
     # Short positions always incur borrowing costs
-    short_wts = weights.copy()
-    short_wts[short_wts >= 0] = 0
-    short_size = short_wts.abs().fillna(0)
-    short_value = short_size * prices
-    short_costs = short_value.T.sum() * rate
+    # Add 1 to the short side weights to apply the mandatory leverage
+    wts = weights.copy()
+    wts[wts < 0] = wts.abs().add(1)
 
-    # Sum the positions to get the portfolio totals at each period
-    # To handle series and dataframes we transpose the rows (equiv. to axis=1)
-    long_wts = weights.copy()
-    long_wts[long_wts < 0] = 0
-    long_size = long_wts.abs().fillna(0).T.sum()
-    long_value = long_size * prices.T.sum()
-    # Leverage is applied when the sum of the absolute weights is greater than 1
-    # Must be a positive value
-    long_lev = np.maximum(0, long_size - 1)
-    long_costs = long_value * rate * long_lev
+    # Calculate the leveraged portion of the position size
+    # Will be zero for long positions with a weight <= 1
+    leveraged_size = wts.fillna(0).sub(1).clip(lower=0)
 
-    # Costs are the product of the portfolio value, borrow rate and leverage
-    costs = long_costs + short_costs
+    # Calculate the borrowing costs for the leveraged longs or short positions
+    costs = leveraged_size * prices * rate
 
     return costs
