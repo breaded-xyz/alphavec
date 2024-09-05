@@ -146,3 +146,10 @@ def test_borrow():
     prices = pd.DataFrame({0: [10, 10], 1: [10, 10]})
     act = av._borrow(weights, prices, rate, periods)
     assert act.iloc[0][1].round(2) == 0.03
+
+    # Case: perp funding
+    weights = pd.Series([0.5, -0.3])
+    prices = pd.Series([10, 10])
+    act = av._borrow(weights, prices, rate, periods, is_perp_funding=True)
+    assert act[0].round(2) == 0.04
+    assert act[1].round(2) == 0.03

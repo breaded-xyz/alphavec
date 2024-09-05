@@ -101,6 +101,7 @@ def backtest(
     ] = zero_commission,
     spread_pct: float = 0,
     ann_borrow_rate: float = 0,
+    is_perp_funding: bool = False,
     ann_risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
     bootstrap_n: int = 1000,
 ) -> Tuple[
@@ -148,6 +149,7 @@ def backtest(
         commission_func: Function to calculate commission cost. Defaults to zero_commission.
         spread_pct: Spread cost as a decimal percentage. Defaults to 0.
         ann_borrow_rate: Annualized borrowing rate applied to short and leveraged long positions. Defaults to 0.
+        is_perp_funding: Flag to simulate perpetual funding whereby the annual borrow rate is applied to all positions all the time. Defaults to False.
         ann_risk_free_rate: Annualized risk-free rate used to calculate Sharpe ratio. Defaults to 0.02.
         bootstrap_n: Number of bootstrap iterations to validate portfolio performance. Defaults to 1000.
 
@@ -204,7 +206,14 @@ def backtest(
     # Short and long positions are not netted off and the overall portfolio leverage is not considered.
     cmn_costs = commission_func(weights, prices) / prices
     borrow_costs = (
-        _borrow(weights, prices, ann_borrow_rate, freq_year=freq_year) / prices
+        _borrow(
+            weights,
+            prices,
+            ann_borrow_rate,
+            freq_year=freq_year,
+            is_perp_funding=is_perp_funding,
+        )
+        / prices
     )
     spread_costs = _spread(weights, prices, spread_pct) / prices
     costs = cmn_costs + borrow_costs + spread_costs
@@ -489,19 +498,27 @@ def _borrow(
     prices: Union[pd.DataFrame, pd.Series],
     ann_borrow_rate: float = 0,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
+    is_perp_funding: bool = False,
 ) -> Union[pd.DataFrame, pd.Series]:
-    """Calculate borrowing costs (short and leveraged long) for each position in the strategy."""
+    """Calculate borrowing costs (short and leveraged long) for each position in the strategy.
+    Optional flag simulates perpetual funding where the borrow rate is applied to all positions all the time.
+    """
 
     rate = _ann_to_period_rate(ann_borrow_rate, freq_year)
 
+    # To simuate perpetual funding the lev threshold is set to 0 meaning all positions incur borrow costs
+    lev_threshold_weight = 1
+    if is_perp_funding:
+        lev_threshold_weight = 0
+
     # Short positions always incur borrowing costs
-    # Add 1 to the short side weights to apply the mandatory leverage
+    # Add the leverage threshold weight to the short side weights to apply the mandatory leverage
     wts = weights.copy()
-    wts[wts < 0] = wts.abs().add(1)
+    wts[wts < 0] = wts.abs().add(lev_threshold_weight)
 
     # Calculate the leveraged portion of the position size
-    # Will be zero for long positions with a weight <= 1
-    leveraged_size = wts.fillna(0).sub(1).clip(lower=0)
+    # Will be zero for long positions with a weight <= 1 unless funding is perpetual
+    leveraged_size = wts.fillna(0).sub(lev_threshold_weight).clip(lower=0)
 
     # Calculate the borrowing costs for the leveraged longs or short positions
     costs = leveraged_size * prices * rate
