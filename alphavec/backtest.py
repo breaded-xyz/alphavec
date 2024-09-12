@@ -23,47 +23,47 @@ def zero_commission(weights: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame
         prices: Prices of the assets in the portfolio.
 
     Returns:
-        Always returns 0.
+        Dataframe with zero commission for each trade.
     """
     return pd.DataFrame(0, index=weights.index, columns=weights.columns)
 
 
 def flat_commission(
-    weights: pd.DataFrame, prices: pd.DataFrame, fee: float
+    weights: pd.DataFrame, prices: pd.DataFrame, fee_amount: float
 ) -> pd.DataFrame:
     """Flat commission applies a fixed fee per trade.
 
     Args:
         weights: Weights of the assets in the portfolio.
         prices: Prices of the assets in the portfolio.
-        fee: Fixed fee per trade.
+        fee_amount: Fixed fee per trade in units of currency.
 
     Returns:
-        Fixed fee per trade.
+        Dataframe with the commission amount for each trade.
     """
     diff = weights.fillna(0).diff().abs() != 0
     tx = diff.astype(int)
-    commissions = tx * fee
-    return commissions
+    commission = tx * fee_amount
+    return commission
 
 
 def pct_commission(
-    weights: pd.DataFrame, prices: pd.DataFrame, fee: float
+    weights: pd.DataFrame, prices: pd.DataFrame, fee_pct: float
 ) -> pd.DataFrame:
     """Percentage commission applies a percentage fee per trade.
 
     Args:
         weights: Weights of the assets in the portfolio.
         prices: Prices of the assets in the portfolio.
-        fee: Percentage fee per trade.
+        fee_pct: Percentage fee per trade in decimal.
 
     Returns:
-        Returns a percentage of the total value of the trade.
+        Dataframe with the commission amount for each trade.
     """
     size = weights.fillna(0).diff().abs()
     value = size * prices
-    commissions = value * fee
-    return commissions
+    commission = value * fee_pct
+    return commission
 
 
 def equity_curve(
@@ -73,7 +73,7 @@ def equity_curve(
 
     Args:
         log_rets: Log returns of the assets in the portfolio.
-        initial: Initial investment. Defaults to 1000.
+        initial: Initial investment. Defaults to 1.
 
     Returns:
         Equity curve.
@@ -117,13 +117,13 @@ def backtest(
     Zero costs are calculated by default: no commission, borrowing or spread.
 
     To prevent look-ahead bias the returns are shifted 1 period relative to the weights.
-    This default shift assumes close prices and an ability to trade at the close,
+    This default shift assumes close prices and an ability to trade immediatley post the close,
     this is reasonable for 24 hour markets such as crypto, but not for traditional markets with fixed trading hours.
     For traditional markets, set shift periods to at least 2.
 
     Daily periods are default.
     If your prices and weights have a different periodocity pass in the appropriate freq_day value.
-    E.G. for 8 hour periods you should pass in 3.
+    E.G. for 8 hour periods pass in 3.
 
     Performance is reported both asset-wise and as a portfolio.
     Annualized metrics use the default trading days per year of 252.
@@ -196,34 +196,38 @@ def backtest(
         axis=1,
     )
 
-    # Backtest a cost-aware strategy as defined by the given weights:
-    # 1. Calc costs
-    # 2. Evaluate asset-wise performance
-    # 3. Evaluate portfolio performance
+    # Backtest the strategy as defined by the given weights
+    # Use the shift_periods arg to prevent look-ahead bias
+    # Truncate the returns to remove the empty intervals resulting from the shift
+    strat_rets = weights * _log_rets(prices).shift(-shift_periods)
+    strat_rets = strat_rets.iloc[:-shift_periods] if shift_periods > 0 else strat_rets
 
-    # Calc each cost component in percentages to deduct from strategy returns
-    # Note: Borrow costs are calculated per asset on shorts and leveraged longs.
+    # Calc cost components using shifted prices to match the strategy returns
+    prices_shifted = prices.shift(-shift_periods)
+    cmn_costs = commission_func(weights, prices_shifted)
+
+    # Borrow costs are calculated per asset on shorts and leveraged longs.
     # Short and long positions are not netted off and the overall portfolio leverage is not considered.
-    cmn_costs = commission_func(weights, prices) / prices
-    borrow_costs = (
-        _borrow(
-            weights,
-            prices,
-            ann_borrow_rate,
-            freq_year=freq_year,
-            is_perp_funding=is_perp_funding,
-        )
-        / prices
+    borrow_costs = _borrow(
+        weights,
+        prices_shifted,
+        ann_borrow_rate,
+        freq_year=freq_year,
+        is_perp_funding=is_perp_funding,
     )
-    spread_costs = _spread(weights, prices, spread_pct) / prices
+
+    spread_costs = _spread(weights, prices_shifted, spread_pct)
+
     costs = cmn_costs + borrow_costs + spread_costs
 
-    # Evaluate the cost-aware strategy returns and key performance metrics
-    # Use the shift arg to prevent look-ahead bias
-    # Truncate the returns to remove the empty intervals resulting from the shift
-    strat_rets = _log_rets(prices) - costs
-    strat_rets = weights * strat_rets.shift(-shift_periods)
-    strat_rets = strat_rets.iloc[:-shift_periods] if shift_periods > 0 else strat_rets
+    # Apply costs to the strategy returns
+    # Convert the costs in currency units to log space
+    costs_pct = costs.div(prices_shifted)
+    costs_log = np.log(1 - costs_pct)
+    costs_log[weights.isna()] = np.nan
+    strat_rets = strat_rets + costs_log
+
+    # With cost-aware returns now calculate the equity curve
     strat_curve = equity_curve(strat_rets)
 
     # Evaluate the strategy asset-wise performance
@@ -468,6 +472,9 @@ def _ann_turnover(
     return ann_turnover
 
 
+EPSILION = 1e-10
+
+
 def _ann_cost_ratio(
     costs_pct: Union[pd.DataFrame, pd.Series],
     log_rets: Union[pd.DataFrame, pd.Series],
@@ -475,7 +482,7 @@ def _ann_cost_ratio(
 ) -> Union[pd.Series, float]:
     """Calculate the annualized ratio of total costs to average PnL."""
     total_costs = costs_pct.abs().sum()
-    avg_equity = equity_curve(log_rets).mean()
+    avg_equity = equity_curve(log_rets).mean() + EPSILION
     cr = total_costs / avg_equity
     ann_cr = cr / (log_rets.count() / freq_year)
     return ann_cr
