@@ -155,10 +155,10 @@ def backtest(
             _ann_vol(asset_rets, freq_year=freq_year),
             _cagr(asset_rets, freq_year=freq_year),
             _max_drawdown(asset_rets),
-        ], # type: ignore
+        ],
         keys=["annual_sharpe", "annual_volatility", "cagr", "max_drawdown"],
         axis=1,
-    ) # type: ignore
+    )
 
     strat_rets = weights * _log_rets(prices).shift(-shift_periods)
     strat_rets = strat_rets.iloc[:-shift_periods] if shift_periods > 0 else strat_rets
@@ -185,7 +185,7 @@ def backtest(
             _max_drawdown(strat_rets),
             _ann_turnover(weights, strat_rets, freq_year=freq_year),
             _ann_cost_ratio(costs, strat_rets, freq_year=freq_year),
-        ], # type: ignore
+        ],
         keys=[
             "annual_sharpe",
             "annual_volatility",
@@ -195,7 +195,7 @@ def backtest(
             "annual_cost_ratio",
         ],
         axis=1,
-    ) # type: ignore
+    )
 
     port_rets = strat_rets.sum(axis=1)
     port_curve = equity_curve(port_rets)
@@ -334,22 +334,22 @@ def _ann_vol(
 def _cagr(
     log_rets: pd.DataFrame | pd.Series,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
-) -> pd.Series | float:
+) -> pd.Series:
     """Calculate CAGR."""
     n_years = log_rets.count() / freq_year
     final = np.exp(log_rets.sum()) - 1
     cagr = (1 + final) ** (1 / n_years) - 1
-    return cagr
+    return pd.Series(cagr)
 
 
 def _max_drawdown(
     log_rets: pd.DataFrame | pd.Series,
-) -> pd.Series | float:
+) -> pd.Series:
     """Calculate the max drawdown in pct."""
     curve = equity_curve(log_rets)
     hwm = curve.cummax()
     dd = (curve - hwm) / hwm
-    return dd.min()
+    return pd.Series(dd.min())
 
 
 def _ann_turnover(
@@ -383,13 +383,13 @@ def _ann_cost_ratio(
     costs_pct: pd.DataFrame | pd.Series,
     log_rets: pd.DataFrame | pd.Series,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
-) -> pd.Series | float:
+) -> pd.Series:
     """Calculate the annualized ratio of total costs to average PnL."""
     total_costs = costs_pct.abs().sum()
     avg_equity = equity_curve(log_rets).mean() + EPSILION
     cr = total_costs / avg_equity
     ann_cr = cr / (log_rets.count() / freq_year)
-    return ann_cr
+    return pd.Series(ann_cr)
 
 
 def _spread(
