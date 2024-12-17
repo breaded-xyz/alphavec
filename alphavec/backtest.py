@@ -79,7 +79,7 @@ def equity_curve(
     Returns:
         Equity curve.
     """
-    growth_factors = np.exp(log_rets)
+    growth_factors = log_rets.transform(np.exp)
     return initial * growth_factors.cumprod()
 
 
@@ -135,7 +135,7 @@ def backtest(
         raise ValueError("Index of weights and prices must match")
     
     if weights.columns.tolist() != prices.columns.tolist():
-        raise ValueError("Columnsß of weights and prices must match")
+        raise ValueError("Columns of weights and prices must match")
 
     row_n, col_n = weights.shape
     ts_start = time.time()
@@ -184,7 +184,6 @@ def backtest(
             _cagr(strat_rets, freq_year=freq_year),
             _max_drawdown(strat_rets),
             _ann_turnover(weights, strat_rets, freq_year=freq_year),
-            _ann_cost_ratio(costs, strat_rets, freq_year=freq_year),
         ],
         keys=[
             "annual_sharpe",
@@ -192,14 +191,12 @@ def backtest(
             "cagr",
             "max_drawdown",
             "annual_turnover",
-            "annual_cost_ratio",
         ],
         axis=1,
     )
 
     port_rets = strat_rets.sum(axis=1)
     port_curve = equity_curve(port_rets)
-    port_costs = costs.abs().sum(axis=1)
     port_ann_turnover = (strat_perf["annual_turnover"] * weights.mean().abs()).sum()
 
     perf = pd.concat([asset_perf, strat_perf], keys=["asset", "strategy"], axis=1)
@@ -219,27 +216,25 @@ def backtest(
     def calc_port_metrics(
         port_rets: pd.Series,
         port_ann_turnover: float,
-        costs: pd.Series,
         freq_year: int,
     ):
         return pd.DataFrame(
             {
-                "annual_sharpe": _ann_sharpe(port_rets, freq_year=freq_year, ann_risk_free_rate=ann_risk_free_rate),
-                "annual_volatility": _ann_vol(port_rets, freq_year=freq_year),
-                "cagr": _cagr(port_rets, freq_year=freq_year),
-                "max_drawdown": _max_drawdown(port_rets),
+                "annual_sharpe": _ann_sharpe(port_rets, freq_year=freq_year, ann_risk_free_rate=ann_risk_free_rate).squeeze(),
+                "annual_volatility": _ann_vol(port_rets, freq_year=freq_year).squeeze(),
+                "cagr": _cagr(port_rets, freq_year=freq_year).squeeze(),
+                "max_drawdown": _max_drawdown(port_rets).squeeze(),
                 "annual_turnover": port_ann_turnover,
-                "annual_cost_ratio": _ann_cost_ratio(costs, port_rets, freq_year=freq_year),
             },
             index=["observed"],
         )
 
-    port_perf = calc_port_metrics(port_rets, port_ann_turnover, port_costs, freq_year)
+    port_perf = calc_port_metrics(port_rets, port_ann_turnover, freq_year)
 
     if bootstrap_n > 0:
         bs_sampled = _bootstrap_sampling(port_rets, n=bootstrap_n, stationary_method=True)
         sampled_perf = pd.concat(
-            [calc_port_metrics(sampled_rets, port_ann_turnover, port_costs, freq_year) for sampled_rets in bs_sampled]
+            [calc_port_metrics(sampled_rets, port_ann_turnover, freq_year) for sampled_rets in bs_sampled]
         )
 
         def describe(x: pd.Series) -> pd.Series:
@@ -272,9 +267,9 @@ def _bootstrap_sampling(
 
     if stationary_method:
         block_size = optimal_block_length(x.dropna())["stationary"].squeeze()
-        bs = StationaryBootstrap(block_size, x.dropna().values, seed=rs)
+        bs = StationaryBootstrap(block_size, x.dropna().values, seed=rs) # type: ignore
         for sample in bs.bootstrap(n):
-            sample = pd.Series(sample[0][0], index=x.index)
+            sample = pd.Series(sample[0][0], index=x.index) # type: ignore
             sample[x.isna()] = np.nan
             samples.append(sample)
     else:
@@ -289,7 +284,7 @@ def _bootstrap_sampling(
 
 def _log_rets(data: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
     """Generate log returns from data."""
-    return np.log(data / data.shift(1))
+    return data.transform(lambda x: np.log(x / x.shift(1)))
 
 
 def _ann_to_period_rate(ann_rate: float, periods_year: int) -> float:
@@ -307,7 +302,7 @@ def _ann_sharpe(
     mu = rets.mean()
     sigma = rets.std()
     sr = (mu - rfr) / sigma
-    return sr * np.sqrt(freq_year)
+    return pd.Series(sr * np.sqrt(freq_year))
 
 
 def _ann_roll_sharpe(
@@ -328,7 +323,7 @@ def _ann_vol(
     rets: pd.DataFrame | pd.Series, freq_year: int = DEFAULT_TRADING_DAYS_YEAR
 ) -> pd.Series:
     """Calculate annualized volatility."""
-    return rets.std() * np.sqrt(freq_year)
+    return pd.Series(rets.std() * np.sqrt(freq_year))
 
 
 def _cagr(
@@ -371,26 +366,12 @@ def _ann_turnover(
 
     # Calculate turnover with safe division
     equity_avg = equity_curve(log_rets).mean()
-    turnover = np.where(equity_avg == 0, 0, trade_volume / equity_avg)
     periods = log_rets.count()
-    ann_turnover = np.where(periods == 0, 0, turnover / (periods / freq_year))
+    turnover = trade_volume.div(equity_avg, fill_value=0)
+    ann_factor = periods / freq_year
+    ann_turnover = turnover.div(ann_factor, fill_value=0)
         
     return pd.Series(ann_turnover)
-
-
-
-def _ann_cost_ratio(
-    costs_pct: pd.DataFrame | pd.Series,
-    log_rets: pd.DataFrame | pd.Series,
-    freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
-) -> pd.Series:
-    """Calculate the annualized ratio of total costs to average PnL."""
-    total_costs = costs_pct.abs().sum()
-    avg_equity = equity_curve(log_rets).mean() + EPSILION
-    cr = total_costs / avg_equity
-    ann_cr = cr / (log_rets.count() / freq_year)
-    return pd.Series(ann_cr)
-
 
 def _spread(
     weights: pd.DataFrame | pd.Series,
