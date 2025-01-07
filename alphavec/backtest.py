@@ -16,7 +16,11 @@ DEFAULT_RISK_FREE_RATE = 0.02
 
 EPSILION = 1e-8
 
-def zero_commission(weights: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
+
+def zero_commission(
+    weights: pd.DataFrame | pd.Series,
+    prices: pd.DataFrame | pd.Series,
+) -> pd.DataFrame | pd.Series:
     """Zero trading commission.
 
     Args:
@@ -24,14 +28,18 @@ def zero_commission(weights: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame
         prices: Prices of the assets in the portfolio.
 
     Returns:
-        Dataframe with zero commission for each trade.
+        Dataframe or series with zero commission for each trade.
     """
-    return pd.DataFrame(0, index=weights.index, columns=weights.columns)
+    fees = weights.copy()
+    fees[:] = 0.0
+    return fees
 
 
 def flat_commission(
-    weights: pd.DataFrame, prices: pd.DataFrame, fee_amount: float
-) -> pd.DataFrame:
+    weights: pd.DataFrame | pd.Series,
+    prices: pd.DataFrame | pd.Series,
+    fee_amount: float,
+) -> pd.DataFrame | pd.Series:
     """Flat commission applies a fixed fee per trade.
 
     Args:
@@ -40,17 +48,21 @@ def flat_commission(
         fee_amount: Fixed fee per trade in units of currency.
 
     Returns:
-        Dataframe with the commission amount for each trade.
+        Dataframe or series with the commission amount for each trade.
     """
-    diff = weights.fillna(0).diff().abs() > EPSILION # Avoid fees on floating point errors
+    diff = (
+        weights.fillna(0).astype(float).diff().abs() > EPSILION
+    )  # Avoid fees on floating point errors
     tx = diff.astype(int)
     commission = tx * fee_amount
     return commission
 
 
 def pct_commission(
-    weights: pd.DataFrame, prices: pd.DataFrame, fee_pct: float
-) -> pd.DataFrame:
+    weights: pd.DataFrame | pd.Series,
+    prices: pd.DataFrame | pd.Series,
+    fee_pct: float,
+) -> pd.DataFrame | pd.Series:
     """Percentage commission applies a percentage fee per trade.
 
     Args:
@@ -59,7 +71,7 @@ def pct_commission(
         fee_pct: Percentage fee per trade in decimal.
 
     Returns:
-        Dataframe with the commission amount for each trade.
+        Dataframe or series with the commission amount for each trade.
     """
     size = weights.fillna(0).diff().abs()
     value = size * prices
@@ -90,13 +102,19 @@ class BacktestResult(NamedTuple):
     port_perf: pd.DataFrame
     port_rets: pd.Series
 
+
+CommissionFunc = Callable[
+    [pd.DataFrame | pd.Series, pd.DataFrame | pd.Series], pd.DataFrame | pd.Series
+]
+
+
 def backtest(
     weights: pd.DataFrame,
     prices: pd.DataFrame,
     freq_day: int = 1,
     trading_days_year: int = DEFAULT_TRADING_DAYS_YEAR,
     shift_periods: int = 1,
-    commission_func: Callable[[pd.DataFrame, pd.DataFrame], pd.DataFrame] = zero_commission,
+    commission_func: CommissionFunc = zero_commission,
     spread_pct: float = 0,
     ann_borrow_rate: float = 0,
     is_perp_funding: bool = False,
@@ -130,10 +148,10 @@ def backtest(
     """
     if weights.shape != prices.shape:
         raise ValueError("Weights and prices must have the same shape")
-    
+
     if weights.index.tolist() != prices.index.tolist():
         raise ValueError("Index of weights and prices must match")
-    
+
     if weights.columns.tolist() != prices.columns.tolist():
         raise ValueError("Columns of weights and prices must match")
 
@@ -151,7 +169,9 @@ def backtest(
 
     asset_perf = pd.concat(
         [
-            _ann_sharpe(asset_rets, freq_year=freq_year, ann_risk_free_rate=ann_risk_free_rate),
+            _ann_sharpe(
+                asset_rets, freq_year=freq_year, ann_risk_free_rate=ann_risk_free_rate
+            ),
             _ann_vol(asset_rets, freq_year=freq_year),
             _cagr(asset_rets, freq_year=freq_year),
             _max_drawdown(asset_rets),
@@ -165,12 +185,14 @@ def backtest(
 
     prices_shifted = prices.shift(-shift_periods)
     cmn_costs = commission_func(weights, prices_shifted)
-    borrow_costs = _borrow(weights, prices_shifted, ann_borrow_rate, freq_year, is_perp_funding)
+    borrow_costs = _borrow(
+        weights, prices_shifted, ann_borrow_rate, freq_year, is_perp_funding
+    )
     spread_costs = _spread(weights, prices_shifted, spread_pct)
 
     costs = cmn_costs + borrow_costs + spread_costs
 
-    costs_pct = costs.div(prices_shifted).clip(lower=0, upper=1-EPSILION)
+    costs_pct = costs.div(prices_shifted).clip(lower=0, upper=1 - EPSILION)
     costs_log = np.log(1 - costs_pct)
     costs_log[weights.isna()] = np.nan
     strat_rets = strat_rets + costs_log
@@ -179,7 +201,9 @@ def backtest(
 
     strat_perf = pd.concat(
         [
-            _ann_sharpe(strat_rets, freq_year=freq_year, ann_risk_free_rate=ann_risk_free_rate),
+            _ann_sharpe(
+                strat_rets, freq_year=freq_year, ann_risk_free_rate=ann_risk_free_rate
+            ),
             _ann_vol(strat_rets, freq_year=freq_year),
             _cagr(strat_rets, freq_year=freq_year),
             _max_drawdown(strat_rets),
@@ -201,13 +225,32 @@ def backtest(
 
     perf = pd.concat([asset_perf, strat_perf], keys=["asset", "strategy"], axis=1)
 
-    perf_curve = pd.concat([port_curve, asset_curve, strat_curve], keys=["portfolio", "asset", "strategy"], axis=1).rename(columns={0: "equity_curve"})
+    perf_curve = pd.concat(
+        [port_curve, asset_curve, strat_curve],
+        keys=["portfolio", "asset", "strategy"],
+        axis=1,
+    ).rename(columns={0: "equity_curve"})
 
     perf_roll_sr = pd.concat(
         [
-            _ann_roll_sharpe(port_rets, window=freq_year, freq_year=freq_year, ann_risk_free_rate=ann_risk_free_rate),
-            _ann_roll_sharpe(asset_rets, window=freq_year, freq_year=freq_year, ann_risk_free_rate=ann_risk_free_rate),
-            _ann_roll_sharpe(strat_rets, window=freq_year, freq_year=freq_year, ann_risk_free_rate=ann_risk_free_rate),
+            _ann_roll_sharpe(
+                port_rets,
+                window=freq_year,
+                freq_year=freq_year,
+                ann_risk_free_rate=ann_risk_free_rate,
+            ),
+            _ann_roll_sharpe(
+                asset_rets,
+                window=freq_year,
+                freq_year=freq_year,
+                ann_risk_free_rate=ann_risk_free_rate,
+            ),
+            _ann_roll_sharpe(
+                strat_rets,
+                window=freq_year,
+                freq_year=freq_year,
+                ann_risk_free_rate=ann_risk_free_rate,
+            ),
         ],
         keys=["portfolio", "asset", "strategy"],
         axis=1,
@@ -220,7 +263,11 @@ def backtest(
     ):
         return pd.DataFrame(
             {
-                "annual_sharpe": _ann_sharpe(port_rets, freq_year=freq_year, ann_risk_free_rate=ann_risk_free_rate).squeeze(),
+                "annual_sharpe": _ann_sharpe(
+                    port_rets,
+                    freq_year=freq_year,
+                    ann_risk_free_rate=ann_risk_free_rate,
+                ).squeeze(),
                 "annual_volatility": _ann_vol(port_rets, freq_year=freq_year).squeeze(),
                 "cagr": _cagr(port_rets, freq_year=freq_year).squeeze(),
                 "max_drawdown": _max_drawdown(port_rets).squeeze(),
@@ -232,9 +279,14 @@ def backtest(
     port_perf = calc_port_metrics(port_rets, port_ann_turnover, freq_year)
 
     if bootstrap_n > 0:
-        bs_sampled = _bootstrap_sampling(port_rets, n=bootstrap_n, stationary_method=True)
+        bs_sampled = _bootstrap_sampling(
+            port_rets, n=bootstrap_n, stationary_method=True
+        )
         sampled_perf = pd.concat(
-            [calc_port_metrics(sampled_rets, port_ann_turnover, freq_year) for sampled_rets in bs_sampled]
+            [
+                calc_port_metrics(sampled_rets, port_ann_turnover, freq_year)
+                for sampled_rets in bs_sampled
+            ]
         )
 
         def describe(x: pd.Series) -> pd.Series:
@@ -267,9 +319,9 @@ def _bootstrap_sampling(
 
     if stationary_method:
         block_size = optimal_block_length(x.dropna())["stationary"].squeeze()
-        bs = StationaryBootstrap(block_size, x.dropna().values, seed=rs) # type: ignore
+        bs = StationaryBootstrap(block_size, x.dropna().values, seed=rs)  # type: ignore
         for sample in bs.bootstrap(n):
-            sample = pd.Series(sample[0][0], index=x.index) # type: ignore
+            sample = pd.Series(sample[0][0], index=x.index)  # type: ignore
             sample[x.isna()] = np.nan
             samples.append(sample)
     else:
@@ -353,12 +405,12 @@ def _ann_turnover(
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
 ) -> pd.Series:
     """Calculate the annualized turnover of the strategy."""
-    
+
     # Calculate period-to-period changes in weights and convert them into notional volumes
     diff = weights.fillna(0).diff().fillna(0)
     buy_volume = diff.where(lambda x: x.gt(0), 0).abs().sum()
     sell_volume = diff.where(lambda x: x.lt(0), 0).abs().sum()
-    
+
     # Calculate the minimum of buy and sell volumes
     trade_volume = pd.concat(
         [pd.Series(buy_volume), pd.Series(sell_volume)], axis=1
@@ -370,8 +422,9 @@ def _ann_turnover(
     turnover = trade_volume.div(equity_avg, fill_value=0)
     ann_factor = periods / freq_year
     ann_turnover = turnover.div(ann_factor, fill_value=0)
-        
+
     return pd.Series(ann_turnover)
+
 
 def _spread(
     weights: pd.DataFrame | pd.Series,
