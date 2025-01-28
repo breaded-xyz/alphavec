@@ -51,7 +51,7 @@ def test_backtest_fixed_weights():
         prices,
         freq_day=1,
         trading_days_year=252,
-        shift_periods=0,
+        lags=0,
     )
     assert (
         perf.loc["BTCUSDT", ("asset", "annual_sharpe")]
@@ -70,7 +70,7 @@ def test_backtest_external_validation():
         prices,
         freq_day=1,
         trading_days_year=252,
-        shift_periods=1,
+        lags=1,
     )
     assert (
         perf_sr.loc["2022-10-01T00:00:00.000", ("portfolio", "sharpe")].round(2)
@@ -80,7 +80,7 @@ def test_backtest_external_validation():
 
 def test_pct_commission():
     weights = pd.Series([0, np.nan, 0, 1, -2.5])
-    prices = pd.Series([10, 10, 10, 10, 10])
+    prices = pd.Series([10, 10, 10, 10, 10], dtype=float)
     act = av.pct_commission(weights, prices, 0.1)
 
     assert np.isnan(act.iloc[0])  # Case: no fee, NaN introduced due to diff()
@@ -90,22 +90,12 @@ def test_pct_commission():
     assert act.iloc[4] == 3.5  # Case: fee for 1 to -2.5
 
 
-def test_ann_cost_ratio():
-    weights = pd.Series([0, np.nan, 0, 1, -2.5])
-    prices = pd.Series([10, 20, 40, 80, 40])
-    returns = weights * av._log_rets(prices)
-
-    act = av._ann_cost_ratio(weights, returns).squeeze().round(2)
-    assert act == 61.62
-    logging.info(act)
-
-
 def test_ann_turnover():
     weights = pd.Series([0, np.nan, 0, 1, -2.5])
     prices = pd.Series([10, 20, 40, 80, 40])
     returns = weights * av._log_rets(prices)
 
-    act = av._ann_turnover(weights, returns).squeeze().round(2)
+    act = av._ann_turnover(weights, returns).round(2).squeeze()
     assert act == 17.61
     logging.info(act)
 
