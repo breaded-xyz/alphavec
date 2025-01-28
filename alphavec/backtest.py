@@ -113,7 +113,7 @@ def backtest(
     prices: pd.DataFrame,
     freq_day: int = 1,
     trading_days_year: int = DEFAULT_TRADING_DAYS_YEAR,
-    shift_periods: int = 1,
+    lags: int = 1,
     commission_func: CommissionFunc = zero_commission,
     spread_pct: float = 0,
     ann_borrow_rate: float = 0,
@@ -131,7 +131,7 @@ def backtest(
         prices: Prices of the assets at each period.
         freq_day: Number of periods in a trading day. Defaults to 1.
         trading_days_year: Number of trading days in a year. Defaults to 252.
-        shift_periods: Positive integer for n periods to shift returns relative to weights. Defaults to 1.
+        lags: Positive integer for n periods to shift returns relative to weights. Defaults to 1.
         commission_func: Function to calculate commission cost. Defaults to zero_commission.
         spread_pct: Spread cost as a decimal percentage. Defaults to 0.
         ann_borrow_rate: Annualized borrowing rate. Defaults to 0.
@@ -164,7 +164,7 @@ def backtest(
     freq_year = freq_day * trading_days_year
 
     asset_rets = _log_rets(prices)
-    asset_rets = asset_rets.iloc[:-shift_periods] if shift_periods > 0 else asset_rets
+    asset_rets = asset_rets.iloc[:-lags] if lags > 0 else asset_rets
     asset_curve = equity_curve(asset_rets)
 
     asset_perf = pd.concat(
@@ -180,10 +180,10 @@ def backtest(
         axis=1,
     )
 
-    strat_rets = weights * _log_rets(prices).shift(-shift_periods)
-    strat_rets = strat_rets.iloc[:-shift_periods] if shift_periods > 0 else strat_rets
+    strat_rets = weights * _log_rets(prices).shift(-lags)
+    strat_rets = strat_rets.iloc[:-lags] if lags > 0 else strat_rets
 
-    prices_shifted = prices.shift(-shift_periods)
+    prices_shifted = prices.shift(-lags)
     cmn_costs = commission_func(weights, prices_shifted)
     borrow_costs = _borrow(
         weights, prices_shifted, ann_borrow_rate, freq_year, is_perp_funding
@@ -192,7 +192,7 @@ def backtest(
 
     costs = cmn_costs + borrow_costs + spread_costs
 
-    costs_pct = costs.div(prices_shifted).clip(lower=0, upper=1 - EPSILION)
+    costs_pct = costs.div(prices_shifted).clip(lower=0, upper=1 - EPSILION)  # type: ignore
     costs_log = np.log(1 - costs_pct)
     costs_log[weights.isna()] = np.nan
     strat_rets = strat_rets + costs_log

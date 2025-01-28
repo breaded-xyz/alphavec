@@ -62,12 +62,13 @@ results = av.backtest(
     prices,
     freq_day=1,  # 1 for daily price periods
     trading_days_year=365,  # 365 for a 24/7 market such as crypto
-    shift_periods=1,  # shift 1 period for close prices
+    lags=1,  # lag prices 1 period for close prices
     commission_func=partial(
         av.pct_commission, fee=0.001
     ),  # 0.1% fee on each trade
     spread_pct=0.0005,  # 0.05% spread on each trade
     ann_borrow_rate=0.05,  # 5% annual borrowing rate for leveraged positions
+    is_perp_funding=True, # apply ann_borrow_rate as an effective funding rate 
     ann_risk_free_rate=0,  # 0% risk free rate used to calculate Sharpe ratio
     bootstrap_n=1000,  # 1000 bootstrap iterations to calculate confidence intervals
 )
@@ -87,9 +88,3 @@ Bootstrapped estimators of the performance distribution give deeper insight into
 
 ### Rolling Sharpe
 ![alt text](img/ann_sharpes.png)
-
-## 🚀 Zero 2 Algo 🚀
-
-As a kwant-curious retail trader are you interested in learning how to design, build and deploy a complete automated real-world strategy validated with Alphavec?
-
-Check out my forthcoming project **Zero 2 Algo**

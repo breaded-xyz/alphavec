@@ -51,7 +51,7 @@ def test_backtest_fixed_weights():
         prices,
         freq_day=1,
         trading_days_year=252,
-        shift_periods=0,
+        lags=0,
     )
     assert (
         perf.loc["BTCUSDT", ("asset", "annual_sharpe")]
@@ -70,7 +70,7 @@ def test_backtest_external_validation():
         prices,
         freq_day=1,
         trading_days_year=252,
-        shift_periods=1,
+        lags=1,
     )
     assert (
         perf_sr.loc["2022-10-01T00:00:00.000", ("portfolio", "sharpe")].round(2)
