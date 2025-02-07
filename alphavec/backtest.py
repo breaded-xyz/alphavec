@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_TRADING_DAYS_YEAR = 252
 DEFAULT_RISK_FREE_RATE = 0.02
 
-EPSILION = 1e-8
+EPSILON = 1e-8  # Renamed from EPSILION
 
 
 def zero_commission(
@@ -51,7 +51,7 @@ def flat_commission(
         Dataframe or series with the commission amount for each trade.
     """
     diff = (
-        weights.fillna(0).astype(float).diff().abs() > EPSILION
+        weights.fillna(0).astype(float).diff().abs() > EPSILON  # Updated constant name
     )  # Avoid fees on floating point errors
     tx = diff.astype(int)
     commission = tx * fee_amount
@@ -137,7 +137,7 @@ def backtest(
         ann_borrow_rate: Annualized borrowing rate. Defaults to 0.
         is_perp_funding: Simulate perpetual funding. Defaults to False.
         ann_risk_free_rate: Annualized risk-free rate. Defaults to 0.02.
-        bootstrap_n: Number of bootstrap iterations. Defaults to 0.
+        bootstrap_n: Number of bootstrap iterations. Defaults to 1000.
     Returns:
         A tuple:
             1. Asset-wise performance table
@@ -192,7 +192,9 @@ def backtest(
 
     costs = cmn_costs + borrow_costs + spread_costs
 
-    costs_pct = costs.div(prices_shifted).clip(lower=0, upper=1 - EPSILION)  # type: ignore
+    costs_pct = costs.div(prices_shifted).clip(
+        lower=0, upper=1 - EPSILON
+    )  # Updated constant name
     costs_log = np.log(1 - costs_pct)
     costs_log[weights.isna()] = np.nan
     strat_rets = strat_rets + costs_log
