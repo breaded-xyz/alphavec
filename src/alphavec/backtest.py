@@ -83,7 +83,7 @@ def equity_curve(
 
 def _arith_rets(data: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
     """Generate arithmetic (simple) returns from price data."""
-    return data.pct_change()
+    return data.pct_change(fill_method=None)
 
 
 class BacktestResult(NamedTuple):

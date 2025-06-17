@@ -66,7 +66,7 @@ def test_backtest_external_validation():
     weights = prices.copy()
     weights[:] = 0.5
 
-    _, _, perf_sr, _, _ = av.backtest(
+    _, _, perf_sr, port_perf, _ = av.backtest(
         weights,
         prices,
         freq_day=1,
@@ -76,6 +76,11 @@ def test_backtest_external_validation():
     sharpe_val = perf_sr.loc["2022-10-01T00:00:00.000", ("portfolio", "sharpe")]
     # Accept small numeric drift across environments ‑ expect approx −0.74 ± 0.02.
     assert sharpe_val == pytest.approx(-0.74, abs=0.02)
+    assert port_perf.loc["observed", "annual_sharpe"]
+    assert port_perf.loc["observed", "annual_volatility"]
+    assert port_perf.loc["observed", "cagr"]
+    assert port_perf.loc["observed", "max_drawdown"]
+    assert port_perf.loc["observed", "annual_turnover"] == 0
 
 
 def test_pct_commission():
