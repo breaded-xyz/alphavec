@@ -80,10 +80,9 @@ def test_backtest_external_validation():
 
 def test_pct_commission():
     weights = pd.Series([0, np.nan, 0, 1, -2.5])
-    prices = pd.Series([10, 10, 10, 10, 10], dtype=float)
     fee_pct = 0.10
 
-    act = av.pct_commission(weights, prices, fee_pct)
+    act = av.pct_commission(weights, fee_pct)
 
     # Expected: |Δw| * fee_pct  (weights are portfolio‑equity fractions)
     expected = weights.fillna(0).diff().abs() * fee_pct
@@ -96,7 +95,6 @@ def test_ann_turnover():
     """Turnover should be zero when there are no trades and strictly non‑negative otherwise."""
     # No trades case
     weights = pd.Series([0.5, 0.5, 0.5])
-    prices = pd.Series([10, 11, 12])
     assert av._ann_turnover(weights).eq(0).all()
 
     # Trade occurs
@@ -110,10 +108,9 @@ def test_ann_turnover():
 
 def test_spread():
     weights = pd.Series([np.nan, 0.5, -2.5])
-    prices = pd.Series([10, 10, 10])
     spread_pct = 0.02
 
-    act = av._spread(weights, prices, spread_pct)
+    act = av._spread(weights, spread_pct)
 
     expected = weights.fillna(0).diff().abs() * (spread_pct * 0.5)
     assert_allclose(act.fillna(0), expected.fillna(0))
@@ -132,26 +129,24 @@ def test_borrow():
 
     # ----- Case 1: no borrowing required (|w| <= 1) -----
     weights = pd.Series([0.50, 0.30])
-    prices = pd.Series([10, 10])  # ignored by _borrow now
-    act = av._borrow(weights, prices, period_rate, periods)
+    act = av._borrow(weights, period_rate, periods)
     assert act.eq(0).all()
 
     # ----- Case 2: short side borrowing (|w| < 0) -----
     weights = pd.Series([0.5, -0.1])
-    act = av._borrow(weights, prices, period_rate, periods)
+    act = av._borrow(weights, period_rate, periods)
     expected = pd.Series([0.0, 0.1 * period_rate])
     assert_allclose(act, expected)
 
     # ----- Case 3: leveraged long (w > 1) -----
     weights = pd.Series([2.0, 0.5])
-    act = av._borrow(weights, prices, period_rate, periods)
+    act = av._borrow(weights, period_rate, periods)
     expected = pd.Series([(2.0 - 1) * period_rate, 0.0])
     assert_allclose(act, expected)
 
     # ----- Case 4: dataframe handling -----
     weights_df = pd.DataFrame({0: [0.5, 0.0], 1: [-0.3, 0.0]})
-    prices_df = pd.DataFrame({0: [10, 10], 1: [10, 10]})
-    act_df = av._borrow(weights_df, prices_df, period_rate, periods)
+    act_df = av._borrow(weights_df, period_rate, periods)
     expected_df = (
         pd.DataFrame(
             {0: [0.0, 0.0], 1: [0.3 + 1 - 1, 0.0]}  # only short position taxed
@@ -162,6 +157,6 @@ def test_borrow():
 
     # ----- Case 5: perp funding (cost applies to the full notional) -----
     weights = pd.Series([0.5, -0.3])
-    act = av._borrow(weights, prices, period_rate, periods, is_perp_funding=True)
+    act = av._borrow(weights, period_rate, periods, is_perp_funding=True)
     expected = pd.Series([0.5 * period_rate, 0.3 * period_rate])
     assert_allclose(act, expected)
