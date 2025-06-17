@@ -83,7 +83,7 @@ def equity_curve(
 
 def _arith_rets(data: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
     """Generate arithmetic (simple) returns from price data."""
-    return data.pct_change()
+    return data.pct_change(fill_method=None)
 
 
 class BacktestResult(NamedTuple):
@@ -380,19 +380,43 @@ def _ann_turnover(
     weights: pd.DataFrame | pd.Series,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
 ) -> pd.Series:
-    """Annualised turnover = 0.5 × mean(Σ|Δw|) × periods_per_year.
-
-    Works for both Series (single asset) and DataFrame (multi-asset) weights.
     """
-    diff_abs = weights.fillna(0).diff().abs().fillna(0)
+    Annualised portfolio turnover.
 
-    if isinstance(diff_abs, pd.Series):
-        traded = 0.5 * diff_abs
+    For each rebalancing step t the (non-annualised) turnover is
+        0.5 * Σ_i | w_{t,i} - w_{t-1,i} |.
+    Multiplying by `freq_year` expresses the figure on a per-year basis.
+
+    Parameters
+    ----------
+    weights : pd.DataFrame or pd.Series
+        Time series of portfolio weights indexed by rebalance date.
+        • DataFrame → columns are assets.
+        • Series    → single-asset “portfolio”.
+    freq_year : int, default 252
+        Number of rebalancing periods in a calendar year
+        (252 for daily, 12 for monthly, etc.).
+
+    Returns
+    -------
+    pd.Series
+        Annualised turnover per date (first entry is NaN because there
+        is no previous weight vector to compare with).
+    """
+    if weights.empty:
+        return pd.Series(dtype=float, index=weights.index)
+
+    weights = weights.sort_index()
+    delta = weights.diff().abs().fillna(0)
+
+    if isinstance(delta, pd.DataFrame):
+        # per-asset turnover, avg across time
+        asset_turn = 0.5 * delta * freq_year
+        return asset_turn.mean()  # index → assets
     else:
-        traded = 0.5 * diff_abs.sum(axis=1)
-
-    ann_turn = traded.mean() * freq_year
-    return pd.Series(ann_turn if np.isscalar(ann_turn) else ann_turn.squeeze())
+        # single-asset portfolio ⇒ scalar
+        step_turn = 0.5 * delta * freq_year
+        return pd.Series(step_turn.mean(), index=[weights.name])
 
 
 def _spread(

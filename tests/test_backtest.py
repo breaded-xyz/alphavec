@@ -13,6 +13,24 @@ workspace_root = str(PurePath(os.getcwd()))
 sys.path.append(workspace_root)
 
 
+def truncated_normal_array(shape, mean=0.0, std=0.3, low=-1.0, high=1.0, seed=42):
+    """Return an ndarray of the requested shape filled with
+    N(mean, std) draws truncated to [low, high]."""
+    rng, size = np.random.default_rng(seed), int(np.prod(shape))
+    samples = []
+    while len(samples) < size:  # rejection sampling
+        draw = rng.normal(loc=mean, scale=std, size=size * 2)
+        samples.extend(draw[(draw >= low) & (draw <= high)][: size - len(samples)])
+    return np.array(samples).reshape(shape)
+
+
+def weights_like(df, mean=0.0, std=0.3, low=-1.0, high=1.0, seed=42):
+    """DataFrame of weights with **same shape, index, and columns**
+    as `df`, reproducibly drawn from a truncated Gaussian."""
+    arr = truncated_normal_array(df.shape, mean, std, low, high, seed)
+    return pd.DataFrame(arr, index=df.index, columns=df.columns)
+
+
 def ohlcv_from_csv(filename):
     return pd.read_csv(
         filename,
@@ -60,22 +78,27 @@ def test_backtest_fixed_weights():
     )
 
 
-def test_backtest_external_validation():
+def test_backtest_changing_weights():
     """Assert that portfolio performance is equal to a known external source (portfolioslab.com)."""
     prices = load_close_prices(["ETHUSDT", "BTCUSDT"])
-    weights = prices.copy()
-    weights[:] = 0.5
+    weights = weights_like(prices)
 
-    _, _, perf_sr, _, _ = av.backtest(
+    perf, _, _, port_perf, _ = av.backtest(
         weights,
         prices,
         freq_day=1,
         trading_days_year=252,
         lags=1,
     )
-    sharpe_val = perf_sr.loc["2022-10-01T00:00:00.000", ("portfolio", "sharpe")]
-    # Accept small numeric drift across environments ‑ expect approx −0.74 ± 0.02.
-    assert sharpe_val == pytest.approx(-0.74, abs=0.02)
+    assert perf.shape == (len(prices.columns), 9)
+
+    assert port_perf.loc["observed", "annual_sharpe"] == pytest.approx(
+        -0.4708, abs=0.01
+    )
+    assert port_perf.loc["observed", "annual_volatility"]
+    assert port_perf.loc["observed", "cagr"]
+    assert port_perf.loc["observed", "max_drawdown"]
+    assert port_perf.loc["observed", "annual_turnover"]
 
 
 def test_pct_commission():
@@ -97,13 +120,27 @@ def test_ann_turnover():
     weights = pd.Series([0.5, 0.5, 0.5])
     assert av._ann_turnover(weights).eq(0).all()
 
-    # Trade occurs
-    weights = pd.Series([0, 1, -1])
-    turnover = av._ann_turnover(weights).squeeze()
+    # ------------------------------------------------------------------ #
+    # 1️⃣  Correctness check (daily data, 252 periods per year)
+    # ------------------------------------------------------------------ #
+    # Weights for three consecutive trading days
+    #   t0 -> 50 %
+    #   t1 -> 60 %  (Δ = +10 %)
+    #   t2 -> 40 %  (Δ = –20 %)
+    weights = pd.Series([0.50, 0.60, 0.40], name="w")
 
-    assert turnover >= 0
-    # Upper bound sanity: cannot exceed twice position change divided by min equity factor
-    assert turnover <= 1000  # generous upper bound, catches runaway leverage bugs
+    # Average annual turnover:
+    #   Δw = [0.00, 0.10, 0.20]               (abs diff, NaN→0)
+    #   mean(|Δw|) = 0.10 / 3 = 0.10
+    #   turnover = 0.5 × mean(|Δw|) × 252
+    expected_scalar = 0.5 * weights.diff().abs().fillna(0).mean() * 252
+    expected = pd.Series([expected_scalar], index=["w"], name="w")
+
+    pd.testing.assert_series_equal(
+        av._ann_turnover(weights),
+        expected,
+        check_names=False,  # we don’t care about the Series name
+    )
 
 
 def test_spread():
