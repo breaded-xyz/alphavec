@@ -4,10 +4,10 @@ import logging
 import time
 from typing import Callable, NamedTuple
 
-import pandas as pd
 import numpy as np
-from numpy.random import RandomState, SeedSequence, MT19937
+import pandas as pd
 from arch.bootstrap import StationaryBootstrap, optimal_block_length
+from numpy.random import MT19937, RandomState, SeedSequence
 
 logger = logging.getLogger(__name__)
 
@@ -73,26 +73,25 @@ def pct_commission(
     Returns:
         Dataframe or series with the commission amount for each trade.
     """
+    # Portfolio weights already express traded notional as Δw (fraction of equity)
     size = weights.fillna(0).diff().abs()
-    value = size * prices
-    commission = value * fee_pct
+    commission = size * fee_pct
     return commission
 
 
 def equity_curve(
     log_rets: pd.DataFrame | pd.Series, initial: float = 1
 ) -> pd.DataFrame | pd.Series:
-    """Calculate the compounded equity curve from log returns.
-
-    Args:
-        log_rets: Log returns of the assets in the portfolio.
-        initial: Initial investment. Defaults to 1.
-
-    Returns:
-        Equity curve.
-    """
-    growth_factors = log_rets.transform(np.exp)
+    """Calculate the compounded equity curve from arithmetic returns."""
+    growth_factors = (
+        1 + log_rets
+    )  # `log_rets` var retained to minimise downstream edits
     return initial * growth_factors.cumprod()
+
+
+def _arith_rets(data: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+    """Generate arithmetic (simple) returns from price data."""
+    return data.pct_change()
 
 
 class BacktestResult(NamedTuple):
@@ -144,7 +143,7 @@ def backtest(
             2. Asset-wise equity curves
             3. Asset-wise rolling annualized Sharpes
             4. Portfolio performance table
-            5. Portfolio (log) returns
+            5. Portfolio (arithmetic) returns
     """
     if weights.shape != prices.shape:
         raise ValueError("Weights and prices must have the same shape")
@@ -163,7 +162,7 @@ def backtest(
 
     freq_year = freq_day * trading_days_year
 
-    asset_rets = _log_rets(prices)
+    asset_rets = _arith_rets(prices)
     asset_rets = asset_rets.iloc[:-lags] if lags > 0 else asset_rets
     asset_curve = equity_curve(asset_rets)
 
@@ -180,7 +179,7 @@ def backtest(
         axis=1,
     )
 
-    strat_rets = weights * _log_rets(prices).shift(-lags)
+    strat_rets = weights * _arith_rets(prices).shift(-lags)
     strat_rets = strat_rets.iloc[:-lags] if lags > 0 else strat_rets
 
     prices_shifted = prices.shift(-lags)
@@ -192,12 +191,10 @@ def backtest(
 
     costs = cmn_costs + borrow_costs + spread_costs
 
-    costs_pct = costs.div(prices_shifted).clip(  # type: ignore
-        lower=0, upper=1 - EPSILON
-    )  # Updated constant name
-    costs_log = np.log(1 - costs_pct)
-    costs_log[weights.isna()] = np.nan
-    strat_rets = strat_rets + costs_log
+    # Costs are already expressed as fractions of equity (return terms).
+    costs_pct = costs.clip(lower=0, upper=1 - EPSILON)
+    strat_rets = strat_rets - costs_pct
+    strat_rets[weights.isna()] = np.nan
 
     strat_curve = equity_curve(strat_rets)
 
@@ -381,29 +378,27 @@ def _ann_vol(
 
 
 def _cagr(
-    log_rets: pd.DataFrame | pd.Series,
+    rets: pd.DataFrame | pd.Series,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
 ) -> pd.Series:
     """Calculate CAGR."""
-    n_years = log_rets.count() / freq_year
-    final = np.exp(log_rets.sum()) - 1
-    cagr = (1 + final) ** (1 / n_years) - 1
-    return pd.Series(cagr)
+    n_years = rets.count() / freq_year
+    final = equity_curve(rets, initial=1).iloc[-1] - 1
+    return pd.Series((1 + final) ** (1 / n_years) - 1)
 
 
 def _max_drawdown(
-    log_rets: pd.DataFrame | pd.Series,
+    rets: pd.DataFrame | pd.Series,
 ) -> pd.Series:
     """Calculate the max drawdown in pct."""
-    curve = equity_curve(log_rets)
+    curve = equity_curve(rets)
     hwm = curve.cummax()
-    dd = (curve - hwm) / hwm
-    return pd.Series(dd.min())
+    return pd.Series(((curve - hwm) / hwm).min())
 
 
 def _ann_turnover(
     weights: pd.DataFrame | pd.Series,
-    log_rets: pd.DataFrame | pd.Series,
+    rets: pd.DataFrame | pd.Series,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
 ) -> pd.Series:
     """Calculate the annualized turnover of the strategy."""
@@ -419,8 +414,8 @@ def _ann_turnover(
     ).min(axis=1)
 
     # Calculate turnover with safe division
-    equity_avg = equity_curve(log_rets).mean()
-    periods = log_rets.count()
+    equity_avg = equity_curve(rets).mean()
+    periods = rets.count()
     turnover = trade_volume.div(equity_avg, fill_value=0)
     ann_factor = periods / freq_year
     ann_turnover = turnover.div(ann_factor, fill_value=0)
@@ -435,9 +430,7 @@ def _spread(
 ) -> pd.DataFrame | pd.Series:
     """Calculate the spread costs for each trade."""
     size = weights.fillna(0).diff().abs()
-    value = size * prices
-    costs = value * (spread_pct * 0.5)
-    return costs
+    return size * (spread_pct * 0.5)
 
 
 def _borrow(
@@ -447,14 +440,27 @@ def _borrow(
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
     is_perp_funding: bool = False,
 ) -> pd.DataFrame | pd.Series:
-    """Calculate borrowing costs for short and leveraged long positions."""
-    rate = _ann_to_period_rate(ann_borrow_rate, freq_year)
+    """Calculate borrowing costs for short and leveraged positions.
+
+    Accepts either an *annual* borrow rate (common case) or a
+    pre‑computed *per‑period* rate.  Rates ≤ 1/freq_year are assumed
+    to be per‑period and are used as‑is; larger values are treated
+    as annual and converted to per‑period compound rates.
+    """
+    # If the supplied rate already looks like a single‑period rate
+    # (i.e. smaller than one period of 100 % per‑year), use it directly.
+    # Otherwise convert the annual rate to a per‑period rate.
+    period_rate_threshold = 1 / freq_year + EPSILON
+    if ann_borrow_rate <= period_rate_threshold:
+        rate = ann_borrow_rate
+    else:
+        rate = _ann_to_period_rate(ann_borrow_rate, freq_year)
 
     lev_threshold_weight = 1 if not is_perp_funding else 0
     wts = weights.copy()
     wts[wts < 0] = wts.abs().add(lev_threshold_weight)
 
     leveraged_size = wts.fillna(0).sub(lev_threshold_weight).clip(lower=0)
-    costs = leveraged_size * prices * rate
+    costs = leveraged_size * rate
 
     return costs
