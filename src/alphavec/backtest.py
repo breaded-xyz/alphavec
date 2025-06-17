@@ -14,18 +14,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_TRADING_DAYS_YEAR = 252
 DEFAULT_RISK_FREE_RATE = 0.02
 
-EPSILON = 1e-8  # Renamed from EPSILION
+EPSILON = 1e-8
 
 
 def zero_commission(
     weights: pd.DataFrame | pd.Series,
-    prices: pd.DataFrame | pd.Series,
 ) -> pd.DataFrame | pd.Series:
     """Zero trading commission.
 
     Args:
         weights: Weights of the assets in the portfolio.
-        prices: Prices of the assets in the portfolio.
 
     Returns:
         Dataframe or series with zero commission for each trade.
@@ -37,14 +35,12 @@ def zero_commission(
 
 def flat_commission(
     weights: pd.DataFrame | pd.Series,
-    prices: pd.DataFrame | pd.Series,
     fee_amount: float,
 ) -> pd.DataFrame | pd.Series:
     """Flat commission applies a fixed fee per trade.
 
     Args:
         weights: Weights of the assets in the portfolio.
-        prices: Prices of the assets in the portfolio.
         fee_amount: Fixed fee per trade in units of currency.
 
     Returns:
@@ -60,14 +56,12 @@ def flat_commission(
 
 def pct_commission(
     weights: pd.DataFrame | pd.Series,
-    prices: pd.DataFrame | pd.Series,
     fee_pct: float,
 ) -> pd.DataFrame | pd.Series:
     """Percentage commission applies a percentage fee per trade.
 
     Args:
         weights: Weights of the assets in the portfolio.
-        prices: Prices of the assets in the portfolio.
         fee_pct: Percentage fee per trade in decimal.
 
     Returns:
@@ -80,12 +74,10 @@ def pct_commission(
 
 
 def equity_curve(
-    log_rets: pd.DataFrame | pd.Series, initial: float = 1
+    rets: pd.DataFrame | pd.Series, initial: float = 1
 ) -> pd.DataFrame | pd.Series:
     """Calculate the compounded equity curve from arithmetic returns."""
-    growth_factors = (
-        1 + log_rets
-    )  # `log_rets` var retained to minimise downstream edits
+    growth_factors = 1 + rets
     return initial * growth_factors.cumprod()
 
 
@@ -102,9 +94,7 @@ class BacktestResult(NamedTuple):
     port_rets: pd.Series
 
 
-CommissionFunc = Callable[
-    [pd.DataFrame | pd.Series, pd.DataFrame | pd.Series], pd.DataFrame | pd.Series
-]
+CommissionFunc = Callable[[pd.DataFrame | pd.Series], pd.DataFrame | pd.Series]
 
 
 def backtest(
@@ -182,14 +172,12 @@ def backtest(
     strat_rets = weights * _arith_rets(prices).shift(-lags)
     strat_rets = strat_rets.iloc[:-lags] if lags > 0 else strat_rets
 
-    cmn_costs = commission_func(weights, prices)
-    borrow_costs = _borrow(weights, prices, ann_borrow_rate, freq_year, is_perp_funding)
-    spread_costs = _spread(weights, prices, spread_pct)
-
+    cmn_costs = commission_func(weights)
+    borrow_costs = _borrow(weights, ann_borrow_rate, freq_year, is_perp_funding)
+    spread_costs = _spread(weights, spread_pct)
     costs = cmn_costs + borrow_costs + spread_costs
-
-    # Costs are already expressed as fractions of equity (return terms).
     costs_pct = costs.clip(lower=0, upper=1 - EPSILON)
+
     strat_rets = strat_rets - costs_pct
     strat_rets[weights.isna()] = np.nan
 
@@ -409,7 +397,6 @@ def _ann_turnover(
 
 def _spread(
     weights: pd.DataFrame | pd.Series,
-    prices: pd.DataFrame | pd.Series,
     spread_pct: float = 0,
 ) -> pd.DataFrame | pd.Series:
     """Calculate the spread costs for each trade."""
@@ -419,7 +406,6 @@ def _spread(
 
 def _borrow(
     weights: pd.DataFrame | pd.Series,
-    prices: pd.DataFrame | pd.Series,
     ann_borrow_rate: float = 0,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
     is_perp_funding: bool = False,
