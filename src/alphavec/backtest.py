@@ -182,12 +182,9 @@ def backtest(
     strat_rets = weights * _arith_rets(prices).shift(-lags)
     strat_rets = strat_rets.iloc[:-lags] if lags > 0 else strat_rets
 
-    prices_shifted = prices.shift(-lags)
-    cmn_costs = commission_func(weights, prices_shifted)
-    borrow_costs = _borrow(
-        weights, prices_shifted, ann_borrow_rate, freq_year, is_perp_funding
-    )
-    spread_costs = _spread(weights, prices_shifted, spread_pct)
+    cmn_costs = commission_func(weights, prices)
+    borrow_costs = _borrow(weights, prices, ann_borrow_rate, freq_year, is_perp_funding)
+    spread_costs = _spread(weights, prices, spread_pct)
 
     costs = cmn_costs + borrow_costs + spread_costs
 
@@ -206,7 +203,7 @@ def backtest(
             _ann_vol(strat_rets, freq_year=freq_year),
             _cagr(strat_rets, freq_year=freq_year),
             _max_drawdown(strat_rets),
-            _ann_turnover(weights, strat_rets, freq_year=freq_year),
+            _ann_turnover(weights, freq_year=freq_year),
         ],
         keys=[
             "annual_sharpe",
@@ -333,11 +330,6 @@ def _bootstrap_sampling(
     return samples
 
 
-def _log_rets(data: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
-    """Generate log returns from data."""
-    return data.transform(lambda x: np.log(x / x.shift(1)))
-
-
 def _ann_to_period_rate(ann_rate: float, periods_year: int) -> float:
     """Calculate the annualized compounding rate for the given period frequency."""
     return (1 + ann_rate) ** (1 / periods_year) - 1
@@ -398,29 +390,21 @@ def _max_drawdown(
 
 def _ann_turnover(
     weights: pd.DataFrame | pd.Series,
-    rets: pd.DataFrame | pd.Series,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
 ) -> pd.Series:
-    """Calculate the annualized turnover of the strategy."""
+    """Annualised turnover = 0.5 × mean(Σ|Δw|) × periods_per_year.
 
-    # Calculate period-to-period changes in weights and convert them into notional volumes
-    diff = weights.fillna(0).diff().fillna(0)
-    buy_volume = diff.where(lambda x: x.gt(0), 0).abs().sum()
-    sell_volume = diff.where(lambda x: x.lt(0), 0).abs().sum()
+    Works for both Series (single asset) and DataFrame (multi-asset) weights.
+    """
+    diff_abs = weights.fillna(0).diff().abs().fillna(0)
 
-    # Calculate the minimum of buy and sell volumes
-    trade_volume = pd.concat(
-        [pd.Series(buy_volume), pd.Series(sell_volume)], axis=1
-    ).min(axis=1)
+    if isinstance(diff_abs, pd.Series):
+        traded = 0.5 * diff_abs
+    else:
+        traded = 0.5 * diff_abs.sum(axis=1)
 
-    # Calculate turnover with safe division
-    equity_avg = equity_curve(rets).mean()
-    periods = rets.count()
-    turnover = trade_volume.div(equity_avg, fill_value=0)
-    ann_factor = periods / freq_year
-    ann_turnover = turnover.div(ann_factor, fill_value=0)
-
-    return pd.Series(ann_turnover)
+    ann_turn = traded.mean() * freq_year
+    return pd.Series(ann_turn if np.isscalar(ann_turn) else ann_turn.squeeze())
 
 
 def _spread(

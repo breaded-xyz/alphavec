@@ -97,14 +97,11 @@ def test_ann_turnover():
     # No trades case
     weights = pd.Series([0.5, 0.5, 0.5])
     prices = pd.Series([10, 11, 12])
-    rets = weights * av._arith_rets(prices)
-    assert av._ann_turnover(weights, rets).eq(0).all()
+    assert av._ann_turnover(weights).eq(0).all()
 
     # Trade occurs
     weights = pd.Series([0, 1, -1])
-    prices = pd.Series([10, 10, 10])
-    rets = weights * av._arith_rets(prices)
-    turnover = av._ann_turnover(weights, rets).squeeze()
+    turnover = av._ann_turnover(weights).squeeze()
 
     assert turnover >= 0
     # Upper bound sanity: cannot exceed twice position change divided by min equity factor
