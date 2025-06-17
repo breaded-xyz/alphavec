@@ -93,7 +93,7 @@ def test_backtest_changing_weights():
     assert perf.shape == (len(prices.columns), 9)
 
     assert port_perf.loc["observed", "annual_sharpe"] == pytest.approx(
-        -0.4708, abs=0.01
+        -0.3983, abs=0.01
     )
     assert port_perf.loc["observed", "annual_volatility"]
     assert port_perf.loc["observed", "cagr"]

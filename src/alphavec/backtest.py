@@ -9,6 +9,8 @@ import pandas as pd
 from arch.bootstrap import StationaryBootstrap, optimal_block_length
 from numpy.random import MT19937, RandomState, SeedSequence
 
+pd.options.mode.chained_assignment = "raise"  # fail-fast on accidental views
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TRADING_DAYS_YEAR = 252
@@ -33,43 +35,29 @@ def zero_commission(
     return fees
 
 
-def flat_commission(
-    weights: pd.DataFrame | pd.Series,
-    fee_amount: float,
-) -> pd.DataFrame | pd.Series:
-    """Flat commission applies a fixed fee per trade.
-
-    Args:
-        weights: Weights of the assets in the portfolio.
-        fee_amount: Fixed fee per trade in units of currency.
-
-    Returns:
-        Dataframe or series with the commission amount for each trade.
-    """
-    diff = (
-        weights.fillna(0).astype(float).diff().abs() > EPSILON  # Updated constant name
-    )  # Avoid fees on floating point errors
-    tx = diff.astype(int)
-    commission = tx * fee_amount
-    return commission
-
-
 def pct_commission(
     weights: pd.DataFrame | pd.Series,
     fee_pct: float,
+    rel_tol: float = 1e-4,
+    abs_tol: float = 1e-8,
 ) -> pd.DataFrame | pd.Series:
-    """Percentage commission applies a percentage fee per trade.
-
-    Args:
-        weights: Weights of the assets in the portfolio.
-        fee_pct: Percentage fee per trade in decimal.
-
-    Returns:
-        Dataframe or series with the commission amount for each trade.
     """
-    # Portfolio weights already express traded notional as Δw (fraction of equity)
-    size = weights.fillna(0).diff().abs()
-    commission = size * fee_pct
+    Commission charged as a **percentage of traded notional**.
+
+    A trade is recognised only when  |Δw|  exceeds
+
+        max(|w_prev| · rel_tol, abs_tol),
+
+    which filters out optimiser or float-rounding noise.
+    """
+    w = weights.fillna(0)
+    delta = w.diff().abs()
+
+    tol = np.maximum(w.abs() * rel_tol, abs_tol)
+    traded = delta > tol
+
+    commission = (delta * fee_pct).where(traded, 0.0)
+    commission[weights.isna()] = np.nan
     return commission
 
 
@@ -152,8 +140,10 @@ def backtest(
 
     freq_year = freq_day * trading_days_year
 
-    asset_rets = _arith_rets(prices)
-    asset_rets = asset_rets.iloc[:-lags] if lags > 0 else asset_rets
+    asset_rets = _arith_rets(prices).shift(-lags)  # align to weights
+    if lags > 0:
+        asset_rets = asset_rets.iloc[:-lags]  # drop trailing NaNs
+
     asset_curve = equity_curve(asset_rets)
 
     asset_perf = pd.concat(
@@ -203,9 +193,24 @@ def backtest(
         axis=1,
     )
 
-    port_rets = strat_rets.sum(axis=1)
+    # -----------------------------------------------------------------
+    #  PORTFOLIO AGGREGATION  – include residual cash earning risk-free
+    # -----------------------------------------------------------------
+    aligned_w = weights.iloc[:-lags] if lags > 0 else weights
+    cash_weight = 1.0 - aligned_w.sum(axis=1)
+    period_rfr = _ann_to_period_rate(ann_risk_free_rate, freq_year)
+
+    # strat_rets holds asset-level *net* returns after costs
+    asset_leg = strat_rets.sum(axis=1)
+    cash_leg = cash_weight * period_rfr
+
+    port_rets = asset_leg + cash_leg
     port_curve = equity_curve(port_rets)
-    port_ann_turnover = (strat_perf["annual_turnover"] * weights.mean().abs()).sum()
+
+    # --------- Standard portfolio-turnover: 0.5 Σ|Δw|, annualised -----------
+    port_turn_ts = 0.5 * aligned_w.diff().abs().sum(axis=1) * freq_year
+    port_turn_ts.iloc[0] = np.nan  # undefined for the first period
+    port_ann_turnover = port_turn_ts.mean()  # average annual turnover
 
     perf = pd.concat([asset_perf, strat_perf], keys=["asset", "strategy"], axis=1)
 
@@ -297,17 +302,27 @@ def _bootstrap_sampling(
     seed: int = 1,
     stationary_method: bool = False,
 ) -> list[pd.Series]:
-    """Bootstrap sampling of a time series, optionally using a stationary method."""
-    samples = []
+    """Bootstrap sampling of a time series, optionally using a stationary (block) method."""
     rs = RandomState(MT19937(SeedSequence(seed)))
+    samples: list[pd.Series] = []
 
     if stationary_method:
         block_size = optimal_block_length(x.dropna())["stationary"].squeeze()
         bs = StationaryBootstrap(block_size, x.dropna().values, seed=rs)  # type: ignore
-        for sample in bs.bootstrap(n):
-            sample = pd.Series(sample[0][0], index=x.index)  # type: ignore
-            sample[x.isna()] = np.nan
+
+        # --- inside _bootstrap_sampling(), in the stationary_method branch -------------
+        for data_pack, _ in bs.bootstrap(n):
+            #    └────── tuple of resampled positional datasets
+            # Extract the resampled array for *our* single series (index 0),
+            #   then flatten to 1-D and rebuild the Series.
+            resampled = np.asarray(data_pack[0]).reshape(-1)  # ← was data.ravel()
+            sample = (
+                pd.Series(resampled, index=x.dropna().index).reindex_like(
+                    x
+                )  # keep time-stamps  # re-insert NaNs
+            )
             samples.append(sample)
+        # -------------------------------------------------------------------------------
     else:
         for _ in range(n):
             sample_vals = rs.choice(x.dropna(), size=x.shape, replace=True)
@@ -327,13 +342,26 @@ def _ann_sharpe(
     rets: pd.DataFrame | pd.Series,
     ann_risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
-) -> pd.Series:
-    """Calculate annualized Sharpe ratio."""
+) -> pd.Series | float:
+    """
+    Annualised Sharpe ratio with a robust zero-σ guard.
+
+    • Works for Series (returns a scalar) and for DataFrames
+      (returns a Series per column).
+    """
     rfr = _ann_to_period_rate(ann_risk_free_rate, freq_year)
-    mu = rets.mean()
-    sigma = rets.std()
-    sr = (mu - rfr) / sigma
-    return pd.Series(sr * np.sqrt(freq_year))
+    mu = rets.mean()  # scalar or Series
+    sigma = rets.std()  # scalar or Series
+
+    # ----- zero-volatility guard ------------------------------------
+    if isinstance(sigma, (pd.Series, pd.DataFrame)):
+        sigma = sigma.replace(0, np.nan)
+    else:  # scalar path
+        sigma = np.nan if np.isclose(sigma, 0.0) else sigma
+    # ----------------------------------------------------------------
+
+    sharpe = (mu - rfr) / sigma
+    return sharpe * np.sqrt(freq_year)
 
 
 def _ann_roll_sharpe(
@@ -342,12 +370,18 @@ def _ann_roll_sharpe(
     window: int = DEFAULT_TRADING_DAYS_YEAR,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
 ) -> pd.DataFrame | pd.Series:
-    """Calculate rolling annualized Sharpe ratio."""
+    """
+    Rolling (window) annualised Sharpe ratio with zero-σ guard.
+    """
     rfr = _ann_to_period_rate(ann_risk_free_rate, freq_year)
     mu = rets.rolling(window).mean()
     sigma = rets.rolling(window).std()
-    sr = (mu - rfr) / sigma
-    return sr * np.sqrt(freq_year)
+
+    # Guard: replace exact zeros with NaN
+    sigma = sigma.where(sigma != 0, np.nan)
+
+    roll_sharpe = (mu - rfr) / sigma
+    return roll_sharpe * np.sqrt(freq_year)
 
 
 def _ann_vol(
@@ -360,11 +394,27 @@ def _ann_vol(
 def _cagr(
     rets: pd.DataFrame | pd.Series,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
-) -> pd.Series:
-    """Calculate CAGR."""
-    n_years = rets.count() / freq_year
-    final = equity_curve(rets, initial=1).iloc[-1] - 1
-    return pd.Series((1 + final) ** (1 / n_years) - 1)
+    init_equity: float = 1.0,
+) -> pd.Series | float:
+    """
+    Compound annual growth rate (CAGR).
+
+    • Works for Series (returns a scalar) and DataFrame (returns Series).
+    • Uses the exact sample length so that partial years are handled correctly.
+    """
+    if len(rets) == 0:
+        return (
+            np.nan
+            if isinstance(rets, pd.Series)
+            else pd.Series(np.nan, index=rets.columns)
+        )
+
+    equity = equity_curve(rets, init_equity)
+    final = equity.iloc[-1]  # scalar or Series
+
+    years = len(rets) / freq_year
+    cagr = (final / init_equity) ** (1.0 / years) - 1.0
+    return cagr
 
 
 def _max_drawdown(
@@ -430,31 +480,33 @@ def _spread(
 
 def _borrow(
     weights: pd.DataFrame | pd.Series,
-    ann_borrow_rate: float = 0,
+    ann_borrow_rate: float = 0.0,
     freq_year: int = DEFAULT_TRADING_DAYS_YEAR,
     is_perp_funding: bool = False,
 ) -> pd.DataFrame | pd.Series:
-    """Calculate borrowing costs for short and leveraged positions.
-
-    Accepts either an *annual* borrow rate (common case) or a
-    pre‑computed *per‑period* rate.  Rates ≤ 1/freq_year are assumed
-    to be per‑period and are used as‑is; larger values are treated
-    as annual and converted to per‑period compound rates.
     """
-    # If the supplied rate already looks like a single‑period rate
-    # (i.e. smaller than one period of 100 % per‑year), use it directly.
-    # Otherwise convert the annual rate to a per‑period rate.
+    Borrowing (or funding) cost paid on the *absolute* size of
+    • short exposure, and
+    • synthetic long leverage above +1 × (or 0 × on perps).
+    """
+    # Decide whether the supplied rate is already per-period
     period_rate_threshold = 1 / freq_year + EPSILON
     if ann_borrow_rate <= period_rate_threshold:
         rate = ann_borrow_rate
     else:
         rate = _ann_to_period_rate(ann_borrow_rate, freq_year)
 
-    lev_threshold_weight = 1 if not is_perp_funding else 0
-    wts = weights.copy()
-    wts[wts < 0] = wts.abs().add(lev_threshold_weight)
+    # Threshold weight where borrowing begins: 1 × for spot, 0 × for perpetuals
+    lev_threshold_weight = 0 if is_perp_funding else 1
 
-    leveraged_size = wts.fillna(0).sub(lev_threshold_weight).clip(lower=0)
+    wts = weights.fillna(0)
+
+    # **NEW:** treat long leverage and shorts separately
+    short_size = (-wts).clip(lower=0)  # |w| for w < 0
+    long_leverage = (wts - lev_threshold_weight).clip(lower=0)
+
+    leveraged_size = short_size + long_leverage  # always ≥ 0
     costs = leveraged_size * rate
+    costs[weights.isna()] = np.nan  # preserve missing data
 
     return costs
