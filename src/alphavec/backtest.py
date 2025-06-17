@@ -212,6 +212,10 @@ def backtest(
     port_turn_ts.iloc[0] = np.nan  # undefined for the first period
     port_ann_turnover = port_turn_ts.mean()  # average annual turnover
 
+    turn_per_bar = 0.5 * aligned_w.diff().abs().sum(axis=1)  # raw figure
+    logger.info(f"avg per-bar turnover: {turn_per_bar.mean():.2%}")
+    logger.info(f"annual:  {turn_per_bar.mean() * freq_year:.1f}×")
+
     perf = pd.concat([asset_perf, strat_perf], keys=["asset", "strategy"], axis=1)
 
     perf_curve = pd.concat(
@@ -399,22 +403,22 @@ def _cagr(
     """
     Compound annual growth rate (CAGR).
 
-    • Works for Series (returns a scalar) and DataFrame (returns Series).
-    • Uses the exact sample length so that partial years are handled correctly.
+    • NaNs are treated as *flat* (0 % return) periods so the curve continues.
     """
-    if len(rets) == 0:
+    if rets.empty:
         return (
             np.nan
             if isinstance(rets, pd.Series)
             else pd.Series(np.nan, index=rets.columns)
         )
 
-    equity = equity_curve(rets, init_equity)
-    final = equity.iloc[-1]  # scalar or Series
+    # --- NEW: fill missing returns with 0 so cumprod keeps going -------------
+    rets_filled = rets.fillna(0.0)
+    growth = (1 + rets_filled).cumprod().iloc[-1] / init_equity
+    # ------------------------------------------------------------------------
 
-    years = len(rets) / freq_year
-    cagr = (final / init_equity) ** (1.0 / years) - 1.0
-    return cagr
+    years = len(rets_filled) / freq_year
+    return growth ** (1.0 / years) - 1.0
 
 
 def _max_drawdown(
