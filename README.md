@@ -13,15 +13,13 @@ Inputs:
 
 Returns:
 - `returns`: period returns as a pandas `Series`.
-- `tearsheet`: key performance metrics as a pandas `Series`.
+- `tearsheet`: key performance metrics as a pandas `DataFrame` with `Value` and `Note` columns.
 
 Tearsheet includes the core metrics from the spec plus:
 - total order count and average order notional
-- max and average gross exposure (% of equity)
-- leverage/exposure percentiles and turnover breakdown
+- gross and net exposure summary (% of equity)
 - drawdown duration and recovery time
 - return distribution stats (best/worst, hit rate, profit factor, skew/kurtosis)
-- concentration stats (max/top‑k weight, Herfindahl index)
 - alpha/beta and tracking stats versus an optional benchmark buy‑and‑hold
 
 Example:

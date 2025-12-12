@@ -1,3 +1,5 @@
+-e .
 pytest
+pyarrow
 plotly
 nbformat

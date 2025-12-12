@@ -16,7 +16,7 @@ def _simulate_reference(
     slippage_pct: float,
     init_cash: float,
     trading_days_year: int,
-) -> tuple[pd.Series, pd.Series]:
+) -> tuple[pd.Series, pd.DataFrame]:
     columns = list(weights.columns)
     positions: dict[str, float] = {c: 0.0 for c in columns}
     cash = float(init_cash)
@@ -98,18 +98,21 @@ def _simulate_reference(
     annual_vol = float(returns.std(ddof=0) * np.sqrt(annual_factor))
     annual_sharpe = float(annual_return / annual_vol) if annual_vol > 0 else np.nan
 
-    tearsheet = pd.Series(
-        {
-            "simulation start date": weights.index.min(),
-            "simulation end date": weights.index.max(),
-            "first order date": first_order_date,
-            "total return %": float(equity_series.iloc[-1] / init_cash - 1.0) * 100.0,
-            "max drawdown (equity) %": max_dd_equity * 100.0,
-            "max drawdown (PnL) %": max_dd_pnl * 100.0,
-            "funding earnings": float(sum(funding)),
-            "fees": float(sum(fees)),
-            "annualized sharpe": annual_sharpe,
-        }
+    metrics = {
+        "Simulation start date": weights.index.min(),
+        "Simulation end date": weights.index.max(),
+        "First transaction date": first_order_date,
+        "Total return %": float(equity_series.iloc[-1] / init_cash - 1.0) * 100.0,
+        "Max drawdown (equity) %": max_dd_equity * 100.0,
+        "Max drawdown (PnL) %": max_dd_pnl * 100.0,
+        "Funding earnings": float(sum(funding)),
+        "Fees": float(sum(fees)),
+        "Annualized Sharpe": annual_sharpe,
+    }
+    tearsheet = pd.DataFrame(
+        [{"Value": v, "Note": ""} for v in metrics.values()],
+        index=pd.Index(metrics.keys(), name="Metric"),
+        columns=["Value", "Note"],
     )
 
     return returns, tearsheet
@@ -147,17 +150,17 @@ def test_simulate_oracle():
     expected_returns = expected_equity.pct_change().fillna(0.0)
 
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet["total return %"]) == pytest.approx(
+    assert float(tearsheet.loc["Total return %", "Value"]) == pytest.approx(
         float((expected_equity.iloc[-1] / init_cash - 1.0) * 100.0)
     )
-    assert float(tearsheet["fees"]) == pytest.approx(2.0909090909)
-    assert float(tearsheet["funding earnings"]) == pytest.approx(0.0)
-    assert float(tearsheet["max drawdown (equity) %"]) == pytest.approx(-0.1)
-    assert float(tearsheet["max drawdown (PnL) %"]) == pytest.approx(0.0)
-    assert int(tearsheet["total order count"]) == 2
-    assert float(tearsheet["average order notional"]) == pytest.approx(1045.4545454545)
-    assert float(tearsheet["max gross exposure %"]) == pytest.approx(100.1001001001)
-    assert float(tearsheet["average gross exposure %"]) == pytest.approx(33.3667000334)
+    assert float(tearsheet.loc["Fees", "Value"]) == pytest.approx(2.0909090909)
+    assert float(tearsheet.loc["Funding earnings", "Value"]) == pytest.approx(0.0)
+    assert float(tearsheet.loc["Max drawdown (equity) %", "Value"]) == pytest.approx(-0.1)
+    assert float(tearsheet.loc["Max drawdown (PnL) %", "Value"]) == pytest.approx(0.0)
+    assert int(tearsheet.loc["Total order count", "Value"]) == 2
+    assert float(tearsheet.loc["Average order notional", "Value"]) == pytest.approx(1045.4545454545)
+    assert float(tearsheet.loc["Gross exposure max %", "Value"]) == pytest.approx(100.1001001001)
+    assert float(tearsheet.loc["Gross exposure mean %", "Value"]) == pytest.approx(33.3667000334)
 
 
 def test_simulate_reference():
@@ -219,14 +222,14 @@ def test_simulate_reference():
 
     assert np.allclose(returns.to_numpy(), ref_returns.to_numpy())
     for key in [
-        "total return %",
-        "max drawdown (equity) %",
-        "max drawdown (PnL) %",
-        "funding earnings",
-        "fees",
-        "annualized sharpe",
+        "Total return %",
+        "Max drawdown (equity) %",
+        "Max drawdown (PnL) %",
+        "Funding earnings",
+        "Fees",
+        "Annualized Sharpe",
     ]:
-        assert float(tearsheet[key]) == pytest.approx(float(ref_tearsheet[key]))
+        assert float(tearsheet.loc[key, "Value"]) == pytest.approx(float(ref_tearsheet.loc[key, "Value"]))
 
 
 def test_simulate_series_inputs():
@@ -254,7 +257,7 @@ def test_simulate_series_inputs():
     expected_returns = expected_equity.pct_change().fillna(0.0)
 
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet["funding earnings"]) == pytest.approx(0.0)
+    assert float(tearsheet.loc["Funding earnings", "Value"]) == pytest.approx(0.0)
 
 
 def test_simulate_order_notional_min_skips_small_rebalance():
@@ -282,8 +285,8 @@ def test_simulate_order_notional_min_skips_small_rebalance():
     expected_returns = expected_equity.pct_change().fillna(0.0)
 
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet["fees"]) == pytest.approx(10.0)
-    assert float(tearsheet["total return %"]) == pytest.approx(-1.0)
+    assert float(tearsheet.loc["Fees", "Value"]) == pytest.approx(10.0)
+    assert float(tearsheet.loc["Total return %", "Value"]) == pytest.approx(-1.0)
 
 
 def test_simulate_closing_ignores_order_notional_min():
@@ -311,8 +314,8 @@ def test_simulate_closing_ignores_order_notional_min():
     expected_returns = expected_equity.pct_change().fillna(0.0)
 
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet["fees"]) == pytest.approx(15.0)
-    assert float(tearsheet["total return %"]) == pytest.approx(-51.5)
+    assert float(tearsheet.loc["Fees", "Value"]) == pytest.approx(15.0)
+    assert float(tearsheet.loc["Total return %", "Value"]) == pytest.approx(-51.5)
 
 
 def test_simulate_funding_sign_convention():
@@ -337,8 +340,8 @@ def test_simulate_funding_sign_convention():
         trading_days_year=365,
         risk_free_rate=0.0,
     )
-    assert float(tearsheet_long["funding earnings"]) == pytest.approx(-10.0)
-    assert float(tearsheet_long["total return %"]) == pytest.approx(-1.0)
+    assert float(tearsheet_long.loc["Funding earnings", "Value"]) == pytest.approx(-10.0)
+    assert float(tearsheet_long.loc["Total return %", "Value"]) == pytest.approx(-1.0)
 
     # Case: short earns.
     weights_short = pd.DataFrame({"BTC": [-1.0]}, index=dates)
@@ -355,8 +358,8 @@ def test_simulate_funding_sign_convention():
         trading_days_year=365,
         risk_free_rate=0.0,
     )
-    assert float(tearsheet_short["funding earnings"]) == pytest.approx(10.0)
-    assert float(tearsheet_short["total return %"]) == pytest.approx(1.0)
+    assert float(tearsheet_short.loc["Funding earnings", "Value"]) == pytest.approx(10.0)
+    assert float(tearsheet_short.loc["Total return %", "Value"]) == pytest.approx(1.0)
 
 
 def test_simulate_mismatched_inputs_raises():
@@ -399,8 +402,8 @@ def test_simulate_nan_order_skips_open_allows_close():
     expected_equity = pd.Series([1000.0, 1000.0, 1000.0], index=dates)
     expected_returns = expected_equity.pct_change().fillna(0.0)
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet["fees"]) == pytest.approx(0.0)
-    assert float(tearsheet["total return %"]) == pytest.approx(0.0)
+    assert float(tearsheet.loc["Fees", "Value"]) == pytest.approx(0.0)
+    assert float(tearsheet.loc["Total return %", "Value"]) == pytest.approx(0.0)
 
 
 def test_simulate_nan_close_carries_forward_and_zero_funding():
@@ -428,7 +431,7 @@ def test_simulate_nan_close_carries_forward_and_zero_funding():
     expected_equity = pd.Series([1000.0, 1000.0], index=dates)
     expected_returns = expected_equity.pct_change().fillna(0.0)
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet["funding earnings"]) == pytest.approx(0.0)
+    assert float(tearsheet.loc["Funding earnings", "Value"]) == pytest.approx(0.0)
 
 
 def test_simulate_alpha_beta_benchmark():
@@ -455,5 +458,5 @@ def test_simulate_alpha_beta_benchmark():
 
     bench_returns = close_prices["BTC"].pct_change().fillna(0.0)
     assert np.allclose(returns.to_numpy(), bench_returns.to_numpy())
-    assert float(tearsheet["beta"]) == pytest.approx(1.0, abs=1e-9)
-    assert float(tearsheet["alpha"]) == pytest.approx(0.0, abs=1e-9)
+    assert float(tearsheet.loc["Beta", "Value"]) == pytest.approx(1.0, abs=1e-9)
+    assert float(tearsheet.loc["Alpha", "Value"]) == pytest.approx(0.0, abs=1e-9)

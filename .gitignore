@@ -59,3 +59,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Agent docs
+AGENTS.md
+SPEC.md
