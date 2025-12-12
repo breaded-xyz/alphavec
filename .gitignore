@@ -37,6 +37,9 @@ venv/
 ENV/
 env/
 
+# pip-tools cache
+.pip-tools-cache/
+
 # Jupyter / IPython
 .ipynb_checkpoints/
 .python_history
@@ -56,4 +59,3 @@ Thumbs.db
 
 # Logs
 *.log
-

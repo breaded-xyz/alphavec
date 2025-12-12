@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alphavec"
+version = "0.1.0"
+description = "Fast minimalist vector-based backtesting for perpetual futures."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "breaded-xyz" }]
+dependencies = [
+  "numpy",
+  "pandas",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
