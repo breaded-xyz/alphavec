@@ -7,12 +7,17 @@ name = "alphavec"
 version = "0.1.1"
 description = "Fast minimalist vector-based backtesting for perpetual futures."
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
 authors = [{ name = "breaded-xyz" }]
 dependencies = [
   "numpy",
   "pandas",
   "plotly",
+]
+
+classifiers = [
+  "License :: OSI Approved :: MIT License",
 ]
 
 [project.urls]
