@@ -35,7 +35,11 @@ def _normalize_inputs(
     w = _to_frame(weights, "weights").astype(float)
     cp = _to_frame(close_prices, "close_prices").astype(float)
     op = _to_frame(order_prices, "order_prices").astype(float)
-    fr = _to_frame(funding_rates, "funding_rates").astype(float) if funding_rates is not None else None
+    fr = (
+        _to_frame(funding_rates, "funding_rates").astype(float)
+        if funding_rates is not None
+        else None
+    )
 
     index = w.index
     columns = w.columns
@@ -153,8 +157,10 @@ def simulate(
     funding_earned = np.empty(n_periods, dtype=float)
     turnover_ratio = np.empty(n_periods, dtype=float)
     gross_exposure_ratio = np.empty(n_periods, dtype=float)
+    net_exposure_ratio = np.empty(n_periods, dtype=float)
     order_count_period = np.empty(n_periods, dtype=int)
     order_notional_sum_period = np.empty(n_periods, dtype=float)
+    slippage_paid = np.empty(n_periods, dtype=float)
 
     first_order_date: pd.Timestamp | None = None
 
@@ -164,6 +170,7 @@ def simulate(
 
     last_op = np.full(n_assets, np.nan, dtype=float)
     last_cp = np.full(n_assets, np.nan, dtype=float)
+    positions_hist = np.empty((n_periods, n_assets), dtype=float)
 
     for i in range(n_periods):
         weights_raw = w[i]
@@ -199,6 +206,14 @@ def simulate(
         nonzero_mask = delta_notional != 0.0
         traded_units[nonzero_mask] = delta_notional[nonzero_mask] / exec_prices[nonzero_mask]
 
+        slippage_cost = np.zeros(n_assets, dtype=float)
+        if slip > 0 and np.any(nonzero_mask):
+            buy_mask = buys & nonzero_mask
+            sell_mask = sells & nonzero_mask
+            slippage_cost[buy_mask] = delta_notional[buy_mask] * slip / (1.0 + slip)
+            slippage_cost[sell_mask] = np.abs(delta_notional[sell_mask]) * slip / (1.0 - slip)
+        slippage_paid[i] = float(slippage_cost.sum())
+
         order_count_period[i] = int(nonzero_mask.sum())
         order_notional_sum_period[i] = float(np.abs(delta_notional[nonzero_mask]).sum())
 
@@ -216,6 +231,7 @@ def simulate(
 
         close_notional = positions * cp_eff_safe
         gross_exposure = float(np.abs(close_notional).sum())
+        net_exposure = float(close_notional.sum())
         fr_eff = np.nan_to_num(fr_raw, nan=0.0)
         fr_eff = np.where(np.isnan(cp_raw), 0.0, fr_eff)
         funding_payment = -float(np.sum(fr_eff * close_notional))
@@ -225,6 +241,8 @@ def simulate(
         equity[i] = cash + float(close_notional.sum())
         denom_equity = abs(equity[i])
         gross_exposure_ratio[i] = gross_exposure / denom_equity if denom_equity != 0 else 0.0
+        net_exposure_ratio[i] = net_exposure / denom_equity if denom_equity != 0 else 0.0
+        positions_hist[i] = positions
 
     equity_series = pd.Series(equity, index=inputs.weights.index, name="equity")
     returns = equity_series.pct_change().fillna(0.0)
@@ -252,15 +270,123 @@ def simulate(
 
     total_order_count = int(order_count_period.sum())
     avg_order_notional = (
-        float(order_notional_sum_period.sum() / total_order_count)
-        if total_order_count > 0
-        else 0.0
+        float(order_notional_sum_period.sum() / total_order_count) if total_order_count > 0 else 0.0
     )
     max_gross_exposure_pct = float(np.nanmax(gross_exposure_ratio) * 100.0)
     avg_gross_exposure_pct = float(np.nanmean(gross_exposure_ratio) * 100.0)
 
+    calmar_ratio = (
+        annual_return / abs(dd_equity) if dd_equity != 0 and np.isfinite(dd_equity) else np.nan
+    )
+    skewness = float(returns.skew())
+    kurtosis = float(returns.kurtosis())
+    best_period_return = float(returns.max())
+    worst_period_return = float(returns.min())
+
+    nonzero_returns = returns[returns != 0.0]
+    wins = nonzero_returns[nonzero_returns > 0.0]
+    losses = nonzero_returns[nonzero_returns < 0.0]
+    win_count = int(wins.count())
+    loss_count = int(losses.count())
+    hit_rate = win_count / (win_count + loss_count) if (win_count + loss_count) > 0 else np.nan
+    avg_win = float(wins.mean()) if win_count > 0 else 0.0
+    avg_loss = float(losses.mean()) if loss_count > 0 else 0.0
+    gross_profit = float(wins.sum())
+    gross_loss = float(abs(losses.sum()))
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.nan
+
+    drawdown = equity_series / equity_series.cummax() - 1.0
+    underwater = drawdown < 0.0
+    dd_groups = (underwater != underwater.shift()).cumsum()
+    dd_durations = underwater.groupby(dd_groups).sum()
+    max_drawdown_duration = int(dd_durations.max()) if len(dd_durations) > 0 else 0
+
+    trough_ts = drawdown.idxmin()
+    peak_value = float(equity_series.cummax().loc[trough_ts])
+    peak_ts_candidates = equity_series.loc[:trough_ts]
+    peak_ts = peak_ts_candidates[peak_ts_candidates == peak_value].index[-1]
+    post_trough = equity_series.loc[trough_ts:]
+    recovered = post_trough[post_trough >= peak_value]
+    if len(recovered) > 0:
+        recovery_ts = recovered.index[0]
+        time_to_recovery = int((equity_series.loc[peak_ts:recovery_ts]).shape[0] - 1)
+    else:
+        time_to_recovery = np.nan
+
+    net_exposure_mean_pct = float(np.nanmean(net_exposure_ratio) * 100.0)
+    net_exposure_median_pct = float(np.nanmedian(net_exposure_ratio) * 100.0)
+    net_exposure_max_pct = float(np.nanmax(np.abs(net_exposure_ratio)) * 100.0)
+
+    gross_exposure_pct = gross_exposure_ratio * 100.0
+    gross_p50_pct, gross_p90_pct, gross_p99_pct = np.nanpercentile(
+        gross_exposure_pct, [50, 90, 99]
+    ).tolist()
+    time_gross_gt_200_pct = float(np.nanmean(gross_exposure_ratio > 2.0) * 100.0)
+
+    turnover_pct = turnover_ratio * 100.0
+    turnover_median = float(np.nanmedian(turnover_pct))
+    turnover_p90 = float(np.nanpercentile(turnover_pct, 90))
+    rebalance_count = int(np.sum(order_count_period > 0))
+
+    holding_lengths: list[int] = []
+    signs = np.sign(positions_hist)
+    for asset_idx in range(n_assets):
+        s = signs[:, asset_idx]
+        start_idx: int | None = None
+        current_sign = 0.0
+        for t, val in enumerate(s):
+            if val != 0.0 and start_idx is None:
+                start_idx = t
+                current_sign = val
+            elif start_idx is not None and (val == 0.0 or val != current_sign):
+                holding_lengths.append(t - start_idx)
+                if val != 0.0:
+                    start_idx = t
+                    current_sign = val
+                else:
+                    start_idx = None
+        if start_idx is not None:
+            holding_lengths.append(n_periods - start_idx)
+    average_holding_period = float(np.mean(holding_lengths)) if holding_lengths else 0.0
+
+    total_fees = float(fees_paid.sum())
+    total_slippage = float(slippage_paid.sum())
+    net_pnl = float(equity_series.iloc[-1] - init_cash)
+    gross_pnl = net_pnl + total_fees + total_slippage
+    costs_pct_gross_pnl = (
+        (total_fees + total_slippage) / abs(gross_pnl) * 100.0 if gross_pnl != 0 else np.nan
+    )
+
+    funding_total = float(funding_earned.sum())
+    funding_pct_total_pnl = funding_total / net_pnl * 100.0 if net_pnl != 0 else np.nan
+    gross_notional = gross_exposure_ratio * np.abs(equity)
+    effective_funding_rate = np.divide(
+        funding_earned,
+        gross_notional,
+        out=np.zeros_like(funding_earned, dtype=float),
+        where=gross_notional > 0.0,
+    )
+    avg_funding_rate_paid_earned = float(np.nanmean(effective_funding_rate))
+
+    abs_weights = np.abs(w)
+    max_abs_weight = float(np.nanmax(abs_weights))
+    top_k = 5
+    topk_mean_per_period = np.nanmean(np.sort(abs_weights, axis=1)[:, -top_k:], axis=1)
+    average_top5_abs_weight = float(np.nanmean(topk_mean_per_period))
+    abs_sum = np.nansum(abs_weights, axis=1)
+    norm_abs = np.divide(
+        abs_weights,
+        abs_sum[:, None],
+        out=np.zeros_like(abs_weights),
+        where=abs_sum[:, None] != 0,
+    )
+    herfindahl_index = float(np.nanmean(np.nansum(norm_abs**2, axis=1)))
+
     alpha: float = np.nan
     beta: float = np.nan
+    tracking_error: float = np.nan
+    information_ratio: float = np.nan
+    r2: float = np.nan
     if benchmark_asset is not None:
         if benchmark_asset not in inputs.close_prices.columns:
             raise ValueError(f"benchmark_asset '{benchmark_asset}' not in weights columns.")
@@ -283,6 +409,14 @@ def simulate(
             else:
                 alpha = np.nan
                 beta = np.nan
+            active_returns = returns - bench_returns
+            tracking_error = float(active_returns.std(ddof=0) * np.sqrt(annual_factor))
+            active_annual_return = float(active_returns.mean() * annual_factor)
+            information_ratio = (
+                active_annual_return / tracking_error if tracking_error > 0 else np.nan
+            )
+            corr = float(returns.corr(bench_returns))
+            r2 = corr * corr if np.isfinite(corr) else np.nan
 
     tearsheet = pd.Series(
         {
@@ -302,8 +436,39 @@ def simulate(
             "average order notional": avg_order_notional,
             "max gross exposure %": max_gross_exposure_pct,
             "average gross exposure %": avg_gross_exposure_pct,
+            "gross exposure p50 %": float(gross_p50_pct),
+            "gross exposure p90 %": float(gross_p90_pct),
+            "gross exposure p99 %": float(gross_p99_pct),
+            "time gross exposure >200% %": time_gross_gt_200_pct,
+            "net exposure mean %": net_exposure_mean_pct,
+            "net exposure median %": net_exposure_median_pct,
+            "net exposure max %": net_exposure_max_pct,
             "alpha": alpha,
             "beta": beta,
+            "tracking error": tracking_error,
+            "information ratio": information_ratio,
+            "r2 vs benchmark": r2,
+            "calmar ratio": calmar_ratio,
+            "skewness": skewness,
+            "kurtosis": kurtosis,
+            "best period return": best_period_return,
+            "worst period return": worst_period_return,
+            "hit rate": hit_rate,
+            "avg win": avg_win,
+            "avg loss": avg_loss,
+            "profit factor": profit_factor,
+            "max drawdown duration": max_drawdown_duration,
+            "time to recovery": time_to_recovery,
+            "median turnover %": turnover_median,
+            "p90 turnover %": turnover_p90,
+            "rebalance count": rebalance_count,
+            "average holding period": average_holding_period,
+            "costs % gross pnl": costs_pct_gross_pnl,
+            "funding % total pnl": funding_pct_total_pnl,
+            "average funding rate paid/earned": avg_funding_rate_paid_earned,
+            "max abs weight": max_abs_weight,
+            "average top5 abs weight": average_top5_abs_weight,
+            "herfindahl index": herfindahl_index,
         }
     )
 

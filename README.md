@@ -18,7 +18,11 @@ Returns:
 Tearsheet includes the core metrics from the spec plus:
 - total order count and average order notional
 - max and average gross exposure (% of equity)
-- alpha (annualized) and beta versus an optional benchmark buy‑and‑hold
+- leverage/exposure percentiles and turnover breakdown
+- drawdown duration and recovery time
+- return distribution stats (best/worst, hit rate, profit factor, skew/kurtosis)
+- concentration stats (max/top‑k weight, Herfindahl index)
+- alpha/beta and tracking stats versus an optional benchmark buy‑and‑hold
 
 Example:
 
