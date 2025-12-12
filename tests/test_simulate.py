@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
 import pytest
+from pathlib import Path
 
-from alphavec import simulate
+from alphavec import simulate, tearsheet
 
 
 def _simulate_reference(
@@ -128,7 +129,7 @@ def test_simulate_oracle():
     init_cash = 1000.0
     fee_pct = 0.001
 
-    returns, tearsheet = simulate(
+    returns, metrics = simulate(
         weights=weights,
         close_prices=close_prices,
         order_prices=order_prices,
@@ -150,17 +151,18 @@ def test_simulate_oracle():
     expected_returns = expected_equity.pct_change().fillna(0.0)
 
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet.loc["Total return %", "Value"]) == pytest.approx(
+    assert float(metrics.loc["Total return %", "Value"]) == pytest.approx(
         float((expected_equity.iloc[-1] / init_cash - 1.0) * 100.0)
     )
-    assert float(tearsheet.loc["Fees", "Value"]) == pytest.approx(2.0909090909)
-    assert float(tearsheet.loc["Funding earnings", "Value"]) == pytest.approx(0.0)
-    assert float(tearsheet.loc["Max drawdown (equity) %", "Value"]) == pytest.approx(-0.1)
-    assert float(tearsheet.loc["Max drawdown (PnL) %", "Value"]) == pytest.approx(0.0)
-    assert int(tearsheet.loc["Total order count", "Value"]) == 2
-    assert float(tearsheet.loc["Average order notional", "Value"]) == pytest.approx(1045.4545454545)
-    assert float(tearsheet.loc["Gross exposure max %", "Value"]) == pytest.approx(100.1001001001)
-    assert float(tearsheet.loc["Gross exposure mean %", "Value"]) == pytest.approx(33.3667000334)
+    assert float(metrics.loc["Fees", "Value"]) == pytest.approx(2.0909090909)
+    assert float(metrics.loc["Funding earnings", "Value"]) == pytest.approx(0.0)
+    assert float(metrics.loc["Max drawdown (equity) %", "Value"]) == pytest.approx(-0.1)
+    assert float(metrics.loc["Max drawdown (PnL) %", "Value"]) == pytest.approx(0.0)
+    assert int(metrics.loc["Total order count", "Value"]) == 2
+    assert float(metrics.loc["Average order notional", "Value"]) == pytest.approx(1045.4545454545)
+    assert float(metrics.loc["Gross exposure max %", "Value"]) == pytest.approx(100.1001001001)
+    assert float(metrics.loc["Gross exposure mean %", "Value"]) == pytest.approx(33.3667000334)
+    assert pd.isna(metrics.loc["Benchmark Asset", "Value"])
 
 
 def test_simulate_reference():
@@ -194,7 +196,7 @@ def test_simulate_reference():
     slippage_pct = 0.0005
     trading_days_year = 365
 
-    returns, tearsheet = simulate(
+    returns, metrics = simulate(
         weights=weights,
         close_prices=close_prices,
         order_prices=order_prices,
@@ -229,7 +231,8 @@ def test_simulate_reference():
         "Fees",
         "Annualized Sharpe",
     ]:
-        assert float(tearsheet.loc[key, "Value"]) == pytest.approx(float(ref_tearsheet.loc[key, "Value"]))
+        assert float(metrics.loc[key, "Value"]) == pytest.approx(float(ref_tearsheet.loc[key, "Value"]))
+    assert pd.isna(metrics.loc["Benchmark Asset", "Value"])
 
 
 def test_simulate_series_inputs():
@@ -239,7 +242,7 @@ def test_simulate_series_inputs():
     order = close.shift(1).fillna(close.iloc[0])
     weights = pd.Series([1.0, 1.0], index=dates, name="BTC")
 
-    returns, tearsheet = simulate(
+    returns, metrics = simulate(
         weights=weights,
         close_prices=close,
         order_prices=order,
@@ -257,7 +260,8 @@ def test_simulate_series_inputs():
     expected_returns = expected_equity.pct_change().fillna(0.0)
 
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet.loc["Funding earnings", "Value"]) == pytest.approx(0.0)
+    assert float(metrics.loc["Funding earnings", "Value"]) == pytest.approx(0.0)
+    assert pd.isna(metrics.loc["Benchmark Asset", "Value"])
 
 
 def test_simulate_order_notional_min_skips_small_rebalance():
@@ -267,7 +271,7 @@ def test_simulate_order_notional_min_skips_small_rebalance():
     order_prices = close_prices.copy()
     weights = pd.DataFrame({"BTC": [1.0, 1.01]}, index=dates)
 
-    returns, tearsheet = simulate(
+    returns, metrics = simulate(
         weights=weights,
         close_prices=close_prices,
         order_prices=order_prices,
@@ -285,8 +289,8 @@ def test_simulate_order_notional_min_skips_small_rebalance():
     expected_returns = expected_equity.pct_change().fillna(0.0)
 
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet.loc["Fees", "Value"]) == pytest.approx(10.0)
-    assert float(tearsheet.loc["Total return %", "Value"]) == pytest.approx(-1.0)
+    assert float(metrics.loc["Fees", "Value"]) == pytest.approx(10.0)
+    assert float(metrics.loc["Total return %", "Value"]) == pytest.approx(-1.0)
 
 
 def test_simulate_closing_ignores_order_notional_min():
@@ -296,7 +300,7 @@ def test_simulate_closing_ignores_order_notional_min():
     order_prices = close_prices.copy()
     weights = pd.DataFrame({"BTC": [1.0, 0.0]}, index=dates)
 
-    returns, tearsheet = simulate(
+    returns, metrics = simulate(
         weights=weights,
         close_prices=close_prices,
         order_prices=order_prices,
@@ -314,8 +318,8 @@ def test_simulate_closing_ignores_order_notional_min():
     expected_returns = expected_equity.pct_change().fillna(0.0)
 
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet.loc["Fees", "Value"]) == pytest.approx(15.0)
-    assert float(tearsheet.loc["Total return %", "Value"]) == pytest.approx(-51.5)
+    assert float(metrics.loc["Fees", "Value"]) == pytest.approx(15.0)
+    assert float(metrics.loc["Total return %", "Value"]) == pytest.approx(-51.5)
 
 
 def test_simulate_funding_sign_convention():
@@ -327,7 +331,7 @@ def test_simulate_funding_sign_convention():
 
     # Case: long pays.
     weights_long = pd.DataFrame({"BTC": [1.0]}, index=dates)
-    _, tearsheet_long = simulate(
+    _, metrics_long = simulate(
         weights=weights_long,
         close_prices=close_prices,
         order_prices=order_prices,
@@ -340,12 +344,12 @@ def test_simulate_funding_sign_convention():
         trading_days_year=365,
         risk_free_rate=0.0,
     )
-    assert float(tearsheet_long.loc["Funding earnings", "Value"]) == pytest.approx(-10.0)
-    assert float(tearsheet_long.loc["Total return %", "Value"]) == pytest.approx(-1.0)
+    assert float(metrics_long.loc["Funding earnings", "Value"]) == pytest.approx(-10.0)
+    assert float(metrics_long.loc["Total return %", "Value"]) == pytest.approx(-1.0)
 
     # Case: short earns.
     weights_short = pd.DataFrame({"BTC": [-1.0]}, index=dates)
-    _, tearsheet_short = simulate(
+    _, metrics_short = simulate(
         weights=weights_short,
         close_prices=close_prices,
         order_prices=order_prices,
@@ -358,8 +362,8 @@ def test_simulate_funding_sign_convention():
         trading_days_year=365,
         risk_free_rate=0.0,
     )
-    assert float(tearsheet_short.loc["Funding earnings", "Value"]) == pytest.approx(10.0)
-    assert float(tearsheet_short.loc["Total return %", "Value"]) == pytest.approx(1.0)
+    assert float(metrics_short.loc["Funding earnings", "Value"]) == pytest.approx(10.0)
+    assert float(metrics_short.loc["Total return %", "Value"]) == pytest.approx(1.0)
 
 
 def test_simulate_mismatched_inputs_raises():
@@ -385,7 +389,7 @@ def test_simulate_nan_order_skips_open_allows_close():
     order_prices = pd.DataFrame({"BTC": [100.0, np.nan, np.nan]}, index=dates)
     weights = pd.DataFrame({"BTC": [1.0, 1.0, 0.0]}, index=dates)
 
-    returns, tearsheet = simulate(
+    returns, metrics = simulate(
         weights=weights,
         close_prices=close_prices,
         order_prices=order_prices,
@@ -402,8 +406,8 @@ def test_simulate_nan_order_skips_open_allows_close():
     expected_equity = pd.Series([1000.0, 1000.0, 1000.0], index=dates)
     expected_returns = expected_equity.pct_change().fillna(0.0)
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet.loc["Fees", "Value"]) == pytest.approx(0.0)
-    assert float(tearsheet.loc["Total return %", "Value"]) == pytest.approx(0.0)
+    assert float(metrics.loc["Fees", "Value"]) == pytest.approx(0.0)
+    assert float(metrics.loc["Total return %", "Value"]) == pytest.approx(0.0)
 
 
 def test_simulate_nan_close_carries_forward_and_zero_funding():
@@ -414,7 +418,7 @@ def test_simulate_nan_close_carries_forward_and_zero_funding():
     funding_rates = pd.DataFrame({"BTC": [0.0, 0.01]}, index=dates)
     weights = pd.DataFrame({"BTC": [1.0, 1.0]}, index=dates)
 
-    returns, tearsheet = simulate(
+    returns, metrics = simulate(
         weights=weights,
         close_prices=close_prices,
         order_prices=order_prices,
@@ -431,7 +435,7 @@ def test_simulate_nan_close_carries_forward_and_zero_funding():
     expected_equity = pd.Series([1000.0, 1000.0], index=dates)
     expected_returns = expected_equity.pct_change().fillna(0.0)
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
-    assert float(tearsheet.loc["Funding earnings", "Value"]) == pytest.approx(0.0)
+    assert float(metrics.loc["Funding earnings", "Value"]) == pytest.approx(0.0)
 
 
 def test_simulate_alpha_beta_benchmark():
@@ -441,7 +445,7 @@ def test_simulate_alpha_beta_benchmark():
     order_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
     weights = pd.DataFrame({"BTC": [1.0] * len(dates)}, index=dates)
 
-    returns, tearsheet = simulate(
+    returns, metrics = simulate(
         weights=weights,
         close_prices=close_prices,
         order_prices=order_prices,
@@ -458,5 +462,36 @@ def test_simulate_alpha_beta_benchmark():
 
     bench_returns = close_prices["BTC"].pct_change().fillna(0.0)
     assert np.allclose(returns.to_numpy(), bench_returns.to_numpy())
-    assert float(tearsheet.loc["Beta", "Value"]) == pytest.approx(1.0, abs=1e-9)
-    assert float(tearsheet.loc["Alpha", "Value"]) == pytest.approx(0.0, abs=1e-9)
+    assert float(metrics.loc["Beta", "Value"]) == pytest.approx(1.0, abs=1e-9)
+    assert float(metrics.loc["Alpha", "Value"]) == pytest.approx(0.0, abs=1e-9)
+    assert metrics.loc["Benchmark Asset", "Value"] == "BTC"
+
+
+def test_tearsheet_renders_html(tmp_path: Path):
+    # Case: HTML is produced and can be written to disk.
+    dates = pd.date_range("2024-01-01", periods=3, freq="1D")
+    close_prices = pd.DataFrame({"BTC": [100.0, 110.0, 120.0]}, index=dates)
+    order_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
+    weights = pd.DataFrame({"BTC": [1.0, 1.0, 1.0]}, index=dates)
+
+    returns, metrics = simulate(
+        weights=weights,
+        close_prices=close_prices,
+        order_prices=order_prices,
+        funding_rates=None,
+        benchmark_asset="BTC",
+        init_cash=1000.0,
+        fee_pct=0.0,
+        slippage_pct=0.0,
+        order_notional_min=0.0,
+        freq_rule="1D",
+        trading_days_year=365,
+        risk_free_rate=0.0,
+    )
+
+    out = tmp_path / "tearsheet.html"
+    html = tearsheet(metrics=metrics, returns=returns, output_path=out)
+    assert "<title>Tearsheet</title>" in html
+    assert "<h1>Tearsheet</h1>" in html
+    assert "Equity Curve" in html
+    assert out.read_text(encoding="utf-8").startswith("<!doctype html>")

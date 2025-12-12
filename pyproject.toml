@@ -12,6 +12,7 @@ authors = [{ name = "breaded-xyz" }]
 dependencies = [
   "numpy",
   "pandas",
+  "plotly",
 ]
 
 [project.optional-dependencies]

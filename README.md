@@ -8,7 +8,7 @@ Fast minimalist vector-based backtesting for perpetual futures portfolios.
 futures backtests from target portfolio weights, producing both:
 
 - `returns`: period-by-period portfolio returns
-- `tearsheet`: a compact table of performance, risk, trading, and exposure metrics
+- `metrics`: a compact table of performance, risk, trading, and exposure metrics
 
 ## Rationale
 
@@ -42,9 +42,9 @@ Inputs:
 
 Returns:
 - `returns`: period returns as a pandas `Series`.
-- `tearsheet`: key performance metrics as a pandas `DataFrame` with `Value` and `Note` columns.
+- `metrics`: key performance metrics as a pandas `DataFrame` with `Value` and `Note` columns.
 
-Tearsheet includes the core metrics from the spec plus:
+Metrics includes the core metrics from the spec plus:
 - total order count and average order notional
 - gross and net exposure summary (% of equity)
 - drawdown duration and recovery time
@@ -55,19 +55,21 @@ Example:
 
 ```python
 import pandas as pd
-from alphavec import simulate
+from alphavec import simulate, tearsheet
 
 weights = pd.DataFrame({"BTC": [1, 1, 1]}, index=pd.date_range("2024-01-01", periods=3, freq="1D"))
 close = pd.DataFrame({"BTC": [100, 105, 110]}, index=weights.index)
 order = close.shift(1).fillna(close.iloc[0])
 
-returns, tearsheet = simulate(
+returns, metrics = simulate(
     weights=weights,
     close_prices=close,
     order_prices=order,
     funding_rates=None,
     benchmark_asset="BTC",  # optional
 )
+
+html = tearsheet(metrics=metrics, returns=returns, output_path="tearsheet.html")
 ```
 
 Assumptions:

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .tearsheet import build_tearsheet
+from .tearsheet import _metrics
 
 
 @dataclass(frozen=True)
@@ -263,7 +263,7 @@ def simulate(
 
     Returns:
         Portfolio period returns as a pandas Series.
-        Tearsheet metrics as a pandas DataFrame with Value and Note columns.
+        Metrics as a pandas DataFrame with Value and Note columns.
     """
 
     inputs = _normalize_inputs(
@@ -285,7 +285,7 @@ def simulate(
     returns = equity_series.pct_change().fillna(0.0)
     returns.name = "returns"
 
-    tearsheet = build_tearsheet(
+    metrics = _metrics(
         weights=inputs.weights,
         close_prices=inputs.close_prices,
         returns=returns,
@@ -307,4 +307,17 @@ def simulate(
         positions_hist=run.positions_hist,
     )
 
-    return returns, tearsheet
+    metrics.attrs["returns"] = returns
+    metrics.attrs["equity"] = equity_series
+    metrics.attrs["init_cash"] = float(init_cash)
+
+    if benchmark_asset is not None and benchmark_asset in inputs.close_prices.columns:
+        bench_prices = inputs.close_prices[benchmark_asset].copy().ffill().bfill()
+        if bench_prices.notna().any():
+            first = float(bench_prices.iloc[0])
+            if np.isfinite(first) and first != 0.0:
+                metrics.attrs["benchmark_equity"] = (init_cash * bench_prices / first).rename(
+                    "benchmark_equity"
+                )
+
+    return returns, metrics
