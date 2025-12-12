@@ -2,7 +2,36 @@
 
 Fast minimalist vector-based backtesting for perpetual futures portfolios.
 
-## simulate
+## Purpose
+
+`alphavec` provides a small, verifiable simulation core for running cross‑margin perpetual
+futures backtests from target portfolio weights, producing both:
+
+- `returns`: period-by-period portfolio returns
+- `tearsheet`: a compact table of performance, risk, trading, and exposure metrics
+
+## Rationale
+
+- **Vector-first**: the simulator works directly on aligned pandas objects and uses NumPy for
+  tight loops and aggregation.
+- **Backtest clarity**: explicit treatment of execution prices (`order_prices`) vs valuation
+  prices (`close_prices`) makes assumptions easier to audit.
+- **Practical constraints**: supports fees, slippage, funding, and minimum notional filters while
+  keeping the model intentionally simple (cross‑margin, unlimited borrowing).
+
+## Install
+
+Requires Python `>=3.12`.
+
+- From source:
+  - `python -m venv .venv`
+  - `./.venv/bin/pip install -e .`
+- For development:
+  - `./.venv/bin/pip install -e ".[dev]"`
+
+## Usage
+
+### simulate
 
 `simulate()` runs a cross‑margin perpetual futures backtest from target portfolio weights.
 
