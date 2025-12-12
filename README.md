@@ -1,6 +1,6 @@
 # alphavec
 
-[![CI](https://github.com/breaded-xyz/alphavec/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/breaded-xyz/alphavec/actions/workflows/ci.yml?query=branch%3Amain)
+[![CI](https://github.com/breaded-xyz/alphavec/actions/workflows/ci.yml/badge.svg)](https://github.com/breaded-xyz/alphavec/actions/workflows/ci.yml)
 
 >**Disclaimer**
 >
