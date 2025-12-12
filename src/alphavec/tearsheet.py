@@ -339,7 +339,10 @@ def _metrics(
     )
 
     return pd.DataFrame(
-        [{"Value": value, "Note": TEARSHEET_NOTES.get(metric, "")} for metric, value in metrics.items()],
+        [
+            {"Value": value, "Note": TEARSHEET_NOTES.get(metric, "")}
+            for metric, value in metrics.items()
+        ],
         index=pd.Index(metrics.keys(), name="Metric"),
         columns=["Value", "Note"],
     )
@@ -445,10 +448,10 @@ def tearsheet(
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tearsheet</title>
     <style>
-      body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; background-color: #ffffff;}}
+      body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }}
       h1 {{ margin: 0 0 16px 0; }}
       h2 {{ margin: 28px 0 12px 0; }}
-      table.metrics {{ border-collapse: collapse; width: 100%; }}
+      table.metrics {{ border-collapse: collapse; width: 100%; background-color: #ffffff; color: #000000; }}
       table.metrics th, table.metrics td {{ border: 1px solid #ddd; padding: 8px; vertical-align: top; }}
       table.metrics th {{ background: #f6f6f6; text-align: left; }}
       .plot {{ margin-top: 12px; }}
