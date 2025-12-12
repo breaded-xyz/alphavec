@@ -1,5 +1,7 @@
 # alphavec
 
+[![CI](https://github.com/breaded-xyz/alphavec/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/breaded-xyz/alphavec/actions/workflows/ci.yml?query=branch%3Amain)
+
 >**Disclaimer**
 >
 >The content provided in this project is for informational purposes only and does not constitute financial advice. This information should not be construed as professional financial advice, and it is recommended to consult with a qualified financial advisor before making any financial decisions.
