@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .tearsheet import _metrics
+from .metrics import _metrics
 
 
 @dataclass(frozen=True)
@@ -80,6 +80,7 @@ def _normalize_inputs(
         raise ValueError("weights must use a DatetimeIndex.")
 
     return _Inputs(weights=w, close_prices=cp, order_prices=op, funding_rates=fr)
+
 
 def _run_simulation(
     *,
