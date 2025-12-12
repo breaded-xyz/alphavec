@@ -44,7 +44,9 @@ The goal was to add just enough extra complexity to this basic formula to suppor
 
 ## Install
 
-Requires Python `>=3.12`.
+Requires Python `>=3.12`
+
+`pip install alphavec`
 
 - From source:
   - `python3 -m venv .venv`
