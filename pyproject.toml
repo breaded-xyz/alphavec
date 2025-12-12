@@ -15,6 +15,11 @@ dependencies = [
   "plotly",
 ]
 
+[project.urls]
+Homepage = "https://github.com/breaded-xyz/alphavec"
+Repository = "https://github.com/breaded-xyz/alphavec"
+Issues = "https://github.com/breaded-xyz/alphavec/issues"
+
 [project.optional-dependencies]
 dev = [
   "pytest",
