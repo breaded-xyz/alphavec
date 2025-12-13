@@ -1,4 +1,4 @@
-# alphavec
+# Alphavec
 
 [![CI](https://github.com/breaded-xyz/alphavec/actions/workflows/ci.yml/badge.svg)](https://github.com/breaded-xyz/alphavec/actions/workflows/ci.yml)
 
@@ -27,7 +27,7 @@ Alphavec is a lightning fast, minimalist, cost-aware vectorized backtest engine 
 
 The backtest input is the natural output of a typical quant research process - a time series of portfolio weights. You simply provide a dataframe of weights and a dataframe of close prices and order prices, along with some optional cost parameters and the backtest returns a streamlined performance report with insight into the key metrics.
 
-`alphavec` has first-class support for simulating perptual futures strategies using a small, fast, verifiable simulation core.
+`alphavec` has first-class support for simulating leveraged perptual futures strategies using a small, fast, verifiable simulation core.
 
 ## Rationale
 
@@ -56,22 +56,23 @@ Requires Python `>=3.12`
 
 ## Usage
 
-### Considerations
+### Notes
 
-- Simulates cross‑margin with unlimited leverage and borrowing (no liquidations or margin calls).
+- Simulates cross‑margin (cash pooling) with unlimited leverage and borrowing (no liquidations or margin calls).
 - Orders execute at `order_prices` plus slippage and fees.
-- Funding applies per period using signed `funding_rates` and close notional.
-- NaNs in `order_prices` and `close_prices` imply the asset is not tradable that period; prices are carried forward for valuation.
-- Positions will always be closed if target weight is zero, regardless of minimum notional filter.
+- Funding applies per period using signed `funding_rates`, +ve rate shorts earn, longs pay, and vice versa for a -ve rate.
+- NaNs in `order_prices` or `close_prices` imply the asset is not tradable that period.
 - NaNs in `funding_rates` are treated as 0, and funding is always 0 when `close_prices` is NaN.
+- Positions will always be closed if target weight is zero, regardless of minimum notional filter.
 
 ### Simulation
 
 `simulate()` runs a cross‑margin perpetual futures backtest from target portfolio weights.
 
-Inputs:
-- `weights`: pandas `DataFrame` or `Series` with a `DatetimeIndex`. Values are decimal target weights
-  (1.0 = 100% notional). Positive = long, negative = short. Weights may sum above 1 for leverage.
+Key inputs:
+- `weights`: pandas `DataFrame` with a `DatetimeIndex` and columns for each asset.
+  Values are decimal percentage target weights (1.0 = 100% equity invested).
+  Positive = long, negative = short. Weights may sum greater than 1 at a time period for leverage.
 - `close_prices`, `order_prices`, `funding_rates` (optional): same shape/index/columns as `weights`.
 
 Returns:
@@ -79,6 +80,8 @@ Returns:
 - `metrics`: key performance metrics as a pandas `DataFrame` with `Value` and `Note` columns.
 
 Example:
+
+See `examples/example.ipynb`
 
 ```python
 import pandas as pd
@@ -102,7 +105,7 @@ returns, metrics= simulate(
     trading_days_year=365,
     risk_free_rate=0.03,
 )
-html = tearsheet(metrics=metrics, returns=returns, output_path="tearsheet.html")
+html_str = tearsheet(metrics=metrics, returns=returns, output_path="tearsheet.html")
 ```
 
 ## Tearsheet Example
