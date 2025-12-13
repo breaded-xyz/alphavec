@@ -44,7 +44,7 @@ The goal was to add just enough extra complexity to this basic formula to suppor
 
 ## Install
 
-Requires Python `>=3.12`
+Requires Python `>=3.10`
 
 `pip install alphavec`
 
