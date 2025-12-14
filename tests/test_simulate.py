@@ -96,7 +96,7 @@ def _simulate_reference(
 
     annual_factor = float(trading_days_year)
     annual_return = float((1.0 + returns).prod() ** (annual_factor / len(returns)) - 1.0)
-    annual_vol = float(returns.std(ddof=0) * np.sqrt(annual_factor))
+    annual_vol = float(returns.std(ddof=1) * np.sqrt(annual_factor))
     annual_sharpe = float(annual_return / annual_vol) if annual_vol > 0 else np.nan
 
     metrics = {

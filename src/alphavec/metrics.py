@@ -16,8 +16,8 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Simulation end date": "Last timestamp in the simulation index. More recent end dates generally better reflect current market conditions.",
     "First transaction date": "First timestamp with any executed trade. Earlier is generally better (less time inactive), depending on the strategy.",
     "Annualized return %": "Geometric mean return annualized (decimal units). Higher is generally better, but interpret alongside risk and drawdowns.",
-    "Annualized volatility": "Standard deviation of returns annualized (decimal units). Lower is generally better for a given return level.",
-    "Annualized Sharpe": "Annualized excess return divided by annualized volatility. Higher is generally better (rule of thumb: >1 is good, >2 is strong).",
+    "Annualized volatility": "Sample standard deviation of returns annualized (decimal units). Lower is generally better for a given return level. Uses Bessel's correction (ddof=1) per industry standard.",
+    "Annualized Sharpe": "Annualized excess return divided by annualized volatility (sample statistics). Higher is generally better (rule of thumb: >1 is good, >2 is strong).",
     "Max drawdown (equity) %": "Worst peak-to-trough % decline in equity. Less negative (closer to 0) is generally better.",
     "Max drawdown (PnL) %": "Worst drawdown of cumulative PnL relative to prior PnL peak. Less negative (closer to 0) is generally better.",
     "Total return %": "Ending equity / initial cash minus 1, expressed in percent. Higher is generally better.",
@@ -32,16 +32,16 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Net exposure mean %": "Average signed exposure as % of equity. Closer to 0 is generally more market-neutral; positive means net long, negative net short.",
     "Net exposure median %": "Median signed exposure as % of equity. Closer to 0 is generally more market-neutral; positive means net long, negative net short.",
     "Net exposure max %": "Max absolute signed exposure as % of equity. Lower absolute values generally mean better exposure control.",
-    "Alpha": "Annualized intercept vs benchmark excess returns (CAPM-style). Higher is generally better; near 0 implies little outperformance after adjusting for beta.",
-    "Beta": "Slope vs benchmark excess returns (CAPM-style). Values near 1 behave like the benchmark; values near 0 have low benchmark sensitivity.",
-    "Tracking error": "Std dev of active returns annualized (decimal units). Lower means closer to the benchmark; higher means more active risk.",
+    "Alpha": "Annualized intercept vs benchmark excess returns (CAPM-style, sample statistics). Higher is generally better; near 0 implies little outperformance after adjusting for beta.",
+    "Beta": "Slope vs benchmark excess returns (CAPM-style, sample covariance/variance). Values near 1 behave like the benchmark; values near 0 have low benchmark sensitivity.",
+    "Tracking error": "Sample std dev of active returns annualized (decimal units). Lower means closer to the benchmark; higher means more active risk.",
     "Information ratio": "Active annual return divided by tracking error. Higher is generally better (rule of thumb: >0.5 is decent, >1 is strong).",
     "R2 vs benchmark": "Squared correlation of returns vs benchmark returns. Higher means the benchmark explains more of the returns; lower implies more idiosyncratic behavior.",
     "Benchmark annualized return %": "Benchmark geometric mean return annualized (percent units). Higher is generally better, but depends on your benchmark choice and sample.",
-    "Active annual return %": "Arithmetic mean of (strategy - benchmark) period returns annualized (percent units). Higher is generally better; negative means underperformance vs the benchmark.",
+    "Active annual return %": "Arithmetic mean of (strategy - benchmark) period returns annualized (percent units). Uses arithmetic (not geometric) mean to match tracking error calculation. Higher is generally better; negative means underperformance vs the benchmark.",
     "Calmar ratio": "Annualized return divided by absolute max equity drawdown. Higher is generally better (more return per unit of drawdown).",
     "Skewness": "Skewness of period returns distribution. More positive skewness is often preferred (more upside tail), all else equal.",
-    "Kurtosis": "Kurtosis of period returns distribution. Lower generally means fewer extreme tail events; high kurtosis suggests fat tails.",
+    "Kurtosis": "Excess kurtosis of period returns distribution (normal distribution = 0). Higher values indicate fatter tails; lower (negative) values indicate thinner tails.",
     "Best period return": "Maximum single-period return. Higher is generally better, but interpret alongside worst-period and drawdowns.",
     "Worst period return": "Minimum single-period return. Less negative (closer to 0) is generally better.",
     "Hit rate": "Fraction of non-zero return periods that are positive. Higher is generally better.",
@@ -56,6 +56,13 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Average funding settled": "Average funding payment per period. Positive is generally better; negative means funding paid on average.",
     "Max abs weight": "Maximum absolute target weight across assets/periods. Lower is generally better (less concentration/leverage), given the strategy's intent.",
     "Mean abs weight": "Mean absolute target weight across assets/periods. Lower is generally better (less aggregate risk), given the strategy's intent.",
+    "Annualized Sortino": "Annualized excess return divided by annualized downside deviation. Higher is generally better; focuses on downside risk unlike Sharpe which penalizes upside volatility.",
+    "Downside deviation": "Sample std dev of negative returns annualized (decimal units). Lower is generally better; measures downside risk only.",
+    "VaR 95%": "Value at Risk at 95% confidence level (5th percentile of returns). Less negative (closer to 0) is generally better; worst expected loss in 19 out of 20 periods.",
+    "CVaR 95%": "Conditional Value at Risk at 95% confidence level (mean of returns below VaR). Less negative (closer to 0) is generally better; average loss when VaR is exceeded.",
+    "Omega Ratio": "Probability-weighted ratio of gains above threshold vs losses below threshold (uses 0 as threshold). Higher is generally better; values >1 mean gains outweigh losses.",
+    "Gain-to-Pain Ratio": "Sum of returns divided by sum of absolute returns. Higher is generally better; measures return per unit of total volatility.",
+    "Ulcer Index": "RMS (root mean square) of drawdowns, annualized. Lower is generally better; alternative drawdown-based risk measure that penalizes depth and duration.",
 }
 
 
@@ -125,7 +132,7 @@ def _metrics(
     annual_factor = _annualization_factor(freq_rule, trading_days_year)
     if n_periods > 0:
         annual_return = float((1.0 + returns).prod() ** (annual_factor / n_periods) - 1.0)
-        annual_vol = float(returns.std(ddof=0) * np.sqrt(annual_factor))
+        annual_vol = float(returns.std(ddof=1) * np.sqrt(annual_factor))
         annual_sharpe = float(
             (annual_return - risk_free_rate) / annual_vol if annual_vol > 0 else np.nan
         )
@@ -224,6 +231,48 @@ def _metrics(
     max_abs_weight = float(np.nanmax(abs_weights))
     mean_abs_weight = float(np.nanmean(abs_weights))
 
+    # Additional risk metrics
+    # Sortino Ratio - uses downside deviation instead of total volatility
+    downside_returns = returns[returns < 0.0]
+    if len(downside_returns) > 1:
+        downside_deviation = float(downside_returns.std(ddof=1) * np.sqrt(annual_factor))
+        annual_sortino = (
+            (annual_return - risk_free_rate) / downside_deviation
+            if downside_deviation > 0
+            else np.nan
+        )
+    else:
+        downside_deviation = 0.0
+        annual_sortino = np.nan
+
+    # VaR (Value at Risk) - 5th percentile (95% confidence)
+    var_95 = float(returns.quantile(0.05))
+
+    # CVaR (Conditional VaR) - mean of returns below VaR
+    returns_below_var = returns[returns <= var_95]
+    cvar_95 = float(returns_below_var.mean()) if len(returns_below_var) > 0 else var_95
+
+    # Omega Ratio - probability-weighted gains/losses ratio (using 0 as threshold)
+    threshold = 0.0
+    gains = returns[returns > threshold]
+    losses = returns[returns < threshold]
+    gains_sum = float(gains.sum()) if len(gains) > 0 else 0.0
+    losses_sum = float(abs(losses.sum())) if len(losses) > 0 else 0.0
+    omega_ratio = gains_sum / losses_sum if losses_sum > 0 else np.nan
+
+    # Gain-to-Pain Ratio
+    sum_returns = float(returns.sum())
+    sum_abs_returns = float(returns.abs().sum())
+    gain_to_pain = sum_returns / sum_abs_returns if sum_abs_returns > 0 else np.nan
+
+    # Ulcer Index - RMS of drawdowns
+    drawdown_pct = drawdown * 100.0  # Convert to percentage
+    ulcer_index = float(
+        np.sqrt(np.mean(drawdown_pct**2)) * np.sqrt(annual_factor / n_periods)
+        if n_periods > 0
+        else 0.0
+    )
+
     alpha: float = np.nan
     beta: float = np.nan
     benchmark_annual_return: float = np.nan
@@ -248,9 +297,9 @@ def _metrics(
             rf_per_period = (1.0 + risk_free_rate) ** (1.0 / annual_factor) - 1.0
             y = returns - rf_per_period
             x = bench_returns - rf_per_period
-            var_x = float(np.var(x, ddof=0))
+            var_x = float(np.var(x, ddof=1))
             if var_x > 0:
-                cov_xy = float(np.mean((x - x.mean()) * (y - y.mean())))
+                cov_xy = float(np.cov(x, y, ddof=1)[0, 1])
                 beta = cov_xy / var_x
                 alpha_per_period = float(y.mean() - beta * x.mean())
                 alpha = alpha_per_period * annual_factor
@@ -258,7 +307,7 @@ def _metrics(
                 alpha = np.nan
                 beta = np.nan
             active_returns = returns - bench_returns
-            tracking_error = float(active_returns.std(ddof=0) * np.sqrt(annual_factor))
+            tracking_error = float(active_returns.std(ddof=1) * np.sqrt(annual_factor))
             active_annual_return = float(active_returns.mean() * annual_factor)
             information_ratio = (
                 active_annual_return / tracking_error if tracking_error > 0 else np.nan
@@ -326,22 +375,41 @@ def _metrics(
         "Max abs weight": max_abs_weight,
         "Mean abs weight": mean_abs_weight,
     }
+    metrics_risk = {
+        "Annualized Sortino": annual_sortino,
+        "Downside deviation": downside_deviation,
+        "VaR 95%": var_95,
+        "CVaR 95%": cvar_95,
+        "Omega Ratio": omega_ratio,
+        "Gain-to-Pain Ratio": gain_to_pain,
+        "Ulcer Index": ulcer_index,
+    }
 
-    metrics = (
-        metrics_meta
-        | metrics_performance
-        | metrics_costs_and_trading
-        | metrics_exposure
-        | metrics_benchmark
-        | metrics_distribution
-        | metrics_portfolio
-    )
+    # Build complete metrics with categories
+    all_metrics = [
+        ("Meta", metrics_meta),
+        ("Performance", metrics_performance),
+        ("Costs & Trading", metrics_costs_and_trading),
+        ("Exposure", metrics_exposure),
+        ("Benchmark", metrics_benchmark),
+        ("Distribution", metrics_distribution),
+        ("Portfolio", metrics_portfolio),
+        ("Risk", metrics_risk),
+    ]
+
+    rows = []
+    for category, metrics_dict in all_metrics:
+        for metric_name, value in metrics_dict.items():
+            rows.append(
+                {
+                    "Category": category,
+                    "Value": value,
+                    "Note": TEARSHEET_NOTES.get(metric_name, ""),
+                }
+            )
 
     return pd.DataFrame(
-        [
-            {"Value": value, "Note": TEARSHEET_NOTES.get(metric, "")}
-            for metric, value in metrics.items()
-        ],
-        index=pd.Index(metrics.keys(), name="Metric"),
-        columns=["Value", "Note"],
+        rows,
+        index=pd.Index([m for _, md in all_metrics for m in md.keys()], name="Metric"),
+        columns=["Category", "Value", "Note"],
     )

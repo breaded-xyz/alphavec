@@ -108,6 +108,43 @@ returns, metrics= simulate(
 html_str = tearsheet(metrics=metrics, returns=returns, output_path="tearsheet.html")
 ```
 
+## Metrics
+
+Alphavec provides 53 comprehensive metrics across 8 categories:
+
+### Categories
+
+1. **Meta** (5 metrics): Simulation metadata and configuration
+2. **Performance** (6 metrics): Returns, volatility, Sharpe ratio, drawdowns
+3. **Costs & Trading** (5 metrics): Fees, funding, turnover, order statistics
+4. **Exposure** (6 metrics): Gross/net leverage metrics
+5. **Benchmark** (7 metrics): Alpha, beta, tracking error, information ratio (CAPM)
+6. **Distribution** (11 metrics): Win/loss stats, skewness, kurtosis, drawdown duration
+7. **Portfolio** (6 metrics): Holding periods, weights, cost ratios
+8. **Risk** (7 metrics): Sortino, VaR, CVaR, Omega, downside deviation, Ulcer Index
+
+### Statistical Methodology
+
+Alphavec follows **industry-standard statistical practices** for backtesting:
+
+- **Sample statistics** (Bessel's correction, `ddof=1`) for all variance/standard deviation calculations
+  - Rationale: Backtests are samples from possible market outcomes, not complete populations
+  - Aligns with quantstats, empyrical, pyfolio, and academic finance literature
+- **Geometric mean** for total returns (compounds properly over time)
+- **Arithmetic mean** for active returns (matches tracking error calculation for Information Ratio)
+- **Sample covariance** for beta calculation (CAPM-consistent)
+- **Excess kurtosis** (normal distribution = 0, not 3)
+
+This ensures alphavec metrics are directly comparable to industry benchmarks and professional analytics platforms.
+
+### New Risk Metrics (v0.2.0)
+
+- **Sortino Ratio**: Better than Sharpe for asymmetric returns (only penalizes downside)
+- **VaR/CVaR**: Industry-standard tail risk measures (95% confidence)
+- **Omega Ratio**: Comprehensive risk-adjusted return (all moments)
+- **Gain-to-Pain**: Simple efficiency metric
+- **Ulcer Index**: Drawdown-based risk that considers duration
+
 ## Tearsheet Example
 
 ![Tearsheet](examples/tearsheet.png)
