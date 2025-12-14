@@ -23,7 +23,7 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Total return %": "Ending equity / initial cash minus 1, expressed in percent. Higher is generally better.",
     "Funding earnings": "Sum of funding payments (positive means net earned). Higher is generally better; negative values mean funding cost.",
     "Fees": "Sum of trading fees paid. Lower is generally better.",
-    "Annual turnover": "Average per-period turnover annualized (not percent). Lower is generally better (less trading/costs), unless the strategy requires frequent rebalancing.",
+    "Annual turnover": "Average per-period one-sided turnover annualized (not percent), computed as min(total buys, total sells) / equity before trading. Lower is generally better (less trading/costs), unless the strategy requires frequent rebalancing.",
     "Total order count": "Count of non-zero notional orders executed. Lower generally means less trading (and costs), but too low can indicate inactivity.",
     "Average order notional": "Mean absolute notional per executed order. Good depends on liquidity and constraints; too large can be hard to execute.",
     "Gross exposure mean %": "Average sum(|positions|) as % of equity. Lower generally means less leverage; values above 100% indicate leveraged exposure.",
@@ -345,4 +345,3 @@ def _metrics(
         index=pd.Index(metrics.keys(), name="Metric"),
         columns=["Value", "Note"],
     )
-

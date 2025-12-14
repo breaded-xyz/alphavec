@@ -190,8 +190,12 @@ def _run_simulation(
         positions += traded_units
 
         fees_paid[i] = float(fee.sum())
+        # Turnover is measured one-sided (industry convention) to avoid double-counting buys+sells.
+        buys_notional = float(np.sum(delta_notional[delta_notional > 0.0]))
+        sells_notional = float(-np.sum(delta_notional[delta_notional < 0.0]))
+        denom_turnover = abs(equity_before)
         turnover_ratio[i] = (
-            float(np.abs(delta_notional).sum() / equity_before) if equity_before != 0 else 0.0
+            min(buys_notional, sells_notional) / denom_turnover if denom_turnover != 0 else 0.0
         )
 
         close_notional = positions * cp_eff_safe
