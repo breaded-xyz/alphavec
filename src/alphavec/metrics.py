@@ -140,6 +140,75 @@ def _t_stat(series: pd.Series) -> float:
     return float(s.mean() / (std / np.sqrt(n)))
 
 
+def _alpha_decay_next_return_by_type(
+    *,
+    weights: pd.DataFrame,
+    close_prices: pd.DataFrame,
+    max_lag: int = 10,
+) -> pd.DataFrame:
+    """
+    Compute a simple "alpha decay" curve by lagging the weights and evaluating them against
+    next-period close-to-close returns.
+
+    The metric is the mean next-period return per unit gross weight, decomposed into:
+    - total: sum(w * r) / gross
+    - selection: (sum(w * r) - sum(w) * mean(r)) / gross
+    - directional: (sum(w) * mean(r)) / gross
+
+    This treats "decay" as the loss of edge when acting on the signal with a delay (lag).
+    """
+
+    w = weights.fillna(0.0).astype(float)
+    fwd = close_prices.shift(-1).divide(close_prices).subtract(1.0)
+    fwd = fwd.replace([np.inf, -np.inf], np.nan)
+
+    n_periods = int(len(w.index))
+    max_lag = int(max_lag)
+    if max_lag < 0:
+        max_lag = 0
+    max_lag = min(max_lag, max(0, n_periods - 2))
+
+    rows: list[dict[str, float]] = []
+    for lag in range(max_lag + 1):
+        w_lag = w.shift(lag).fillna(0.0)
+        active = (w_lag != 0.0) & fwd.notna()
+
+        w_act = w_lag.where(active, 0.0)
+        r_act = fwd.where(active, 0.0)
+
+        n_active = active.sum(axis=1).astype(float)
+        gross = w_act.abs().sum(axis=1)
+        s_w = w_act.sum(axis=1)
+        s_r = r_act.sum(axis=1)
+        s_wr = (w_act * r_act).sum(axis=1)
+
+        n_safe = n_active.where(n_active > 0, np.nan)
+        mean_r = s_r / n_safe
+        directional = s_w * mean_r
+        selection = s_wr - directional
+
+        valid = (n_active >= 2) & (gross > 0.0)
+        total_per_gross = (s_wr / gross).where(valid)
+        selection_per_gross = (selection / gross).where(valid)
+        directional_per_gross = (directional / gross).where(valid)
+
+        rows.append(
+            {
+                "lag": float(lag),
+                "total_per_gross_mean": float(total_per_gross.mean(skipna=True)),
+                "total_per_gross_t_stat": _t_stat(total_per_gross),
+                "selection_per_gross_mean": float(selection_per_gross.mean(skipna=True)),
+                "selection_per_gross_t_stat": _t_stat(selection_per_gross),
+                "directional_per_gross_mean": float(directional_per_gross.mean(skipna=True)),
+                "directional_per_gross_t_stat": _t_stat(directional_per_gross),
+            }
+        )
+
+    df = pd.DataFrame(rows).set_index(pd.Index([int(r["lag"]) for r in rows], name="Lag"))
+    df = df.drop(columns=["lag"], errors="ignore")
+    return df
+
+
 def _weight_forward_diagnostics(
     *,
     weights: pd.DataFrame,
@@ -735,4 +804,9 @@ def _metrics(
     df.attrs["weight_forward_deciles_contrib"] = wf_deciles_contrib
     df.attrs["weight_forward_deciles_contrib_long"] = wf_deciles_contrib_long
     df.attrs["weight_forward_deciles_contrib_short"] = wf_deciles_contrib_short
+    df.attrs["alpha_decay_next_return_by_type"] = _alpha_decay_next_return_by_type(
+        weights=weights,
+        close_prices=close_prices,
+        max_lag=10,
+    )
     return df

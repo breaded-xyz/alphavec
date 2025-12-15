@@ -46,4 +46,5 @@ def test_tearsheet_renders_grid_heatmaps():
 
     html = tearsheet(grid_results=results)
     assert "<h2>Parameter Search</h2>" in html
+    assert "Signal: Alpha Decay by Lag (Next Return, Per Gross)" in html
     assert results.param_grids[0].label() in html

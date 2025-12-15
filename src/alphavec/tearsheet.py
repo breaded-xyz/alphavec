@@ -370,6 +370,40 @@ def tearsheet(
                 )
             )
 
+    # Alpha decay by lag (next-period return types)
+    decay = metrics.attrs.get("alpha_decay_next_return_by_type")
+    if isinstance(decay, pd.DataFrame) and len(decay.index) > 0:
+        decay_num = decay.apply(pd.to_numeric, errors="coerce")
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        x = decay_num.index.to_numpy(dtype=int)
+
+        series_specs = [
+            ("total_per_gross_mean", "Total"),
+            ("selection_per_gross_mean", "Selection"),
+            ("directional_per_gross_mean", "Directional"),
+        ]
+        for col, label in series_specs:
+            if col not in decay_num.columns:
+                continue
+            y = (decay_num[col] * 100.0).to_numpy(dtype=float)
+            ax.plot(x, y, marker="o", linewidth=2, label=label)
+
+        ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+        ax.set_title("Signal: Alpha Decay by Lag (Next Return, Per Gross)")
+        ax.set_xlabel("Lag (periods)")
+        ax.set_ylabel("Mean next return per gross (%)")
+        ax.legend(loc="best")
+        signal_blocks.append(
+            _plot_block(
+                title="Signal: Alpha Decay by Lag (Next Return, Per Gross)",
+                fig=fig,
+                note=(
+                    "Mean next-period return per unit gross weight when acting on the signal with a delay (lag), split into total / selection / directional components.",
+                    "Faster decay implies a shorter-lived edge; selection decay suggests cross-sectional ranking stability issues, while directional decay points to net bias timing.",
+                ),
+            )
+        )
+
     # Deciles
     wf_deciles = metrics.attrs.get("weight_forward_deciles")
     wf_deciles_median = metrics.attrs.get("weight_forward_deciles_median")
