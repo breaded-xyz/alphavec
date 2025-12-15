@@ -1,4 +1,7 @@
 -e .
+numpy
+pandas
+plotly
 pytest
 pyarrow
 nbformat

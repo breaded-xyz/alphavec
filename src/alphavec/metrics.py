@@ -4,6 +4,7 @@ Metrics calculation utilities for alphavec simulations.
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 import numpy as np
@@ -85,6 +86,20 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Directionality mean": "Average net-to-gross ratio (Σ w_t,i) / (Σ |w_t,i|). Values near 0 indicate market-neutral; positive is net long; negative net short.",
 }
 
+_SENTENCE_SPLIT_RE: Final[re.Pattern[str]] = re.compile(r"(?<=[.!?])\s+")
+
+
+def _format_tearsheet_note(note: str, *, include_definition: bool = True) -> str:
+    s = str(note or "").strip()
+    if not s:
+        return ""
+    if not include_definition:
+        return f"Interpretation: {s}"
+    parts = _SENTENCE_SPLIT_RE.split(s, maxsplit=1)
+    definition = parts[0].strip()
+    interpretation = parts[1].strip() if len(parts) > 1 else "See definition."
+    return f"Definition: {definition}\nInterpretation: {interpretation}"
+
 
 def _max_drawdown(curve: pd.Series) -> float:
     running_max = curve.cummax()
@@ -129,7 +144,16 @@ def _weight_forward_diagnostics(
     *,
     weights: pd.DataFrame,
     close_prices: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.Series]:
+) -> tuple[
+    pd.DataFrame,
+    pd.Series,
+    pd.Series,
+    pd.Series,
+    pd.Series,
+    pd.Series,
+    pd.Series,
+    pd.Series,
+]:
     w = weights.fillna(0.0).astype(float)
     fwd = close_prices.shift(-1).divide(close_prices).subtract(1.0)
     fwd = fwd.replace([np.inf, -np.inf], np.nan)
@@ -158,8 +182,10 @@ def _weight_forward_diagnostics(
     long_ret_per_gross = np.full(n_periods, np.nan, dtype=float)
     short_ret_per_gross = np.full(n_periods, np.nan, dtype=float)
 
-    dec_sum = np.zeros(10, dtype=float)
-    dec_count = np.zeros(10, dtype=int)
+    dec_values: list[list[np.ndarray]] = [[] for _ in range(10)]
+    dec_contrib_sum = np.zeros(10, dtype=float)
+    dec_contrib_long_sum = np.zeros(10, dtype=float)
+    dec_contrib_short_sum = np.zeros(10, dtype=float)
 
     w_np = w.to_numpy(dtype=float)
     fwd_np = fwd.to_numpy(dtype=float)
@@ -222,6 +248,7 @@ def _weight_forward_diagnostics(
         n = int(w_m.shape[0])
         if n >= 10:
             order = np.argsort(w_m, kind="mergesort")
+            w_sorted = w_m[order]
             r_sorted = r_m[order]
             n = int(r_sorted.shape[0])
             dec = (np.arange(n) * 10) // n
@@ -231,11 +258,17 @@ def _weight_forward_diagnostics(
                 spread[t] = float(np.mean(top) - np.mean(bottom))
 
             for d in range(10):
-                vals = r_sorted[dec == d]
-                if vals.size == 0:
+                d_mask = dec == d
+                vals_r = r_sorted[d_mask]
+                if vals_r.size == 0:
                     continue
-                dec_sum[d] += float(np.sum(vals))
-                dec_count[d] += int(vals.size)
+                vals_w = w_sorted[d_mask]
+                dec_values[d].append(vals_r.astype(float, copy=True))
+
+                contrib = vals_w * vals_r
+                dec_contrib_sum[d] += float(np.sum(contrib))
+                dec_contrib_long_sum[d] += float(np.sum(contrib[vals_w > 0.0]))
+                dec_contrib_short_sum[d] += float(np.sum(contrib[vals_w < 0.0]))
 
     wf = pd.DataFrame(
         {
@@ -261,14 +294,71 @@ def _weight_forward_diagnostics(
         index=w.index,
     )
 
-    denom = np.where(dec_count > 0, dec_count.astype(float), np.nan)
-    decile_means = dec_sum / denom
-    decile_curve = pd.Series(
-        decile_means,
+    decile_mean = np.full(10, np.nan, dtype=float)
+    decile_median = np.full(10, np.nan, dtype=float)
+    decile_std = np.full(10, np.nan, dtype=float)
+    decile_count = np.zeros(10, dtype=float)
+    for d in range(10):
+        if len(dec_values[d]) == 0:
+            continue
+        vals = np.concatenate(dec_values[d], axis=0)
+        if vals.size == 0:
+            continue
+        decile_count[d] = float(vals.size)
+        decile_mean[d] = float(np.mean(vals))
+        decile_median[d] = float(np.median(vals))
+        decile_std[d] = float(np.std(vals, ddof=1)) if vals.size >= 2 else np.nan
+
+    denom = np.where(decile_count > 0, decile_count, np.nan)
+    decile_contrib_mean = dec_contrib_sum / denom
+    decile_contrib_long = dec_contrib_long_sum / denom
+    decile_contrib_short = dec_contrib_short_sum / denom
+
+    decile_mean_curve = pd.Series(
+        decile_mean,
         index=pd.Index(range(1, 11), name="Decile"),
         name="Mean next return",
     )
-    return wf, decile_curve
+    decile_median_curve = pd.Series(
+        decile_median,
+        index=pd.Index(range(1, 11), name="Decile"),
+        name="Median next return",
+    )
+    decile_std_curve = pd.Series(
+        decile_std,
+        index=pd.Index(range(1, 11), name="Decile"),
+        name="Std next return",
+    )
+    decile_count_curve = pd.Series(
+        decile_count,
+        index=pd.Index(range(1, 11), name="Decile"),
+        name="Count",
+    )
+    decile_contrib_curve = pd.Series(
+        decile_contrib_mean,
+        index=pd.Index(range(1, 11), name="Decile"),
+        name="Mean next return contribution",
+    )
+    decile_contrib_long_curve = pd.Series(
+        decile_contrib_long,
+        index=pd.Index(range(1, 11), name="Decile"),
+        name="Mean next return contribution (long)",
+    )
+    decile_contrib_short_curve = pd.Series(
+        decile_contrib_short,
+        index=pd.Index(range(1, 11), name="Decile"),
+        name="Mean next return contribution (short)",
+    )
+    return (
+        wf,
+        decile_mean_curve,
+        decile_median_curve,
+        decile_std_curve,
+        decile_count_curve,
+        decile_contrib_curve,
+        decile_contrib_long_curve,
+        decile_contrib_short_curve,
+    )
 
 
 def _metrics(
@@ -302,7 +392,16 @@ def _metrics(
     n_periods = int(len(returns))
     n_assets = int(weights.shape[1])
 
-    wf, wf_deciles = _weight_forward_diagnostics(weights=weights, close_prices=close_prices)
+    (
+        wf,
+        wf_deciles,
+        wf_deciles_median,
+        wf_deciles_std,
+        wf_deciles_count,
+        wf_deciles_contrib,
+        wf_deciles_contrib_long,
+        wf_deciles_contrib_short,
+    ) = _weight_forward_diagnostics(weights=weights, close_prices=close_prices)
 
     pnl_curve = equity - init_cash
     total_return_pct = float(equity.iloc[-1] / init_cash - 1.0)
@@ -616,7 +715,10 @@ def _metrics(
                 {
                     "Category": category,
                     "Value": value,
-                    "Note": TEARSHEET_NOTES.get(metric_name, ""),
+                    "Note": _format_tearsheet_note(
+                        TEARSHEET_NOTES.get(metric_name, ""),
+                        include_definition=(category != "Meta"),
+                    ),
                 }
             )
 
@@ -627,4 +729,10 @@ def _metrics(
     )
     df.attrs["weight_forward"] = wf
     df.attrs["weight_forward_deciles"] = wf_deciles
+    df.attrs["weight_forward_deciles_median"] = wf_deciles_median
+    df.attrs["weight_forward_deciles_std"] = wf_deciles_std
+    df.attrs["weight_forward_deciles_count"] = wf_deciles_count
+    df.attrs["weight_forward_deciles_contrib"] = wf_deciles_contrib
+    df.attrs["weight_forward_deciles_contrib_long"] = wf_deciles_contrib_long
+    df.attrs["weight_forward_deciles_contrib_short"] = wf_deciles_contrib_short
     return df

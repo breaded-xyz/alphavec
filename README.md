@@ -89,13 +89,13 @@ from alphavec import simulate, tearsheet
 
 weights = pd.DataFrame({"BTC": [1, 1, 1]}, index=pd.date_range("2024-01-01", periods=3, freq="1D"))
 close_prices = pd.DataFrame({"BTC": [100, 105, 110]}, index=weights.index)
-order_prices = close.shift(1).fillna(close.iloc[0])
+order_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
 
-returns, metrics= simulate(
+returns, metrics = simulate(
     weights=weights,
     close_prices=close_prices,
     order_prices=order_prices,
-    funding_rates=funding_rates,
+    funding_rates=None,
     benchmark_asset="BTC",
     order_notional_min=10,
     fee_pct=0.00025,       # 2.5 bps per trade
@@ -105,24 +105,47 @@ returns, metrics= simulate(
     trading_days_year=365,
     risk_free_rate=0.03,
 )
-html_str = tearsheet(metrics=metrics, returns=returns, output_path="tearsheet.html")
+html_str = tearsheet(
+    metrics=metrics,
+    returns=returns,
+    output_path="tearsheet.html",
+    signal_smooth_window=30,
+    rolling_sharpe_window=30,
+)
 ```
 
 ## Metrics
 
-Alphavec provides 73 comprehensive metrics across 9 categories:
+`simulate()` returns a `metrics` DataFrame with `Category`, `Value`, and `Note` columns. Metrics are grouped into categories:
 
 ### Categories
 
-1. **Meta** (10 metrics): Simulation metadata and configuration
-2. **Performance** (6 metrics): Returns, volatility, Sharpe ratio, drawdowns
-3. **Costs** (5 metrics): Fees, funding, turnover, order statistics
-4. **Exposure** (6 metrics): Gross/net leverage metrics
-5. **Benchmark** (7 metrics): Alpha, beta, tracking error, information ratio (CAPM)
-6. **Distribution** (11 metrics): Win/loss stats, skewness, kurtosis, drawdown duration
-7. **Portfolio** (6 metrics): Holding periods, weights, cost ratios
-8. **Risk** (7 metrics): Sortino, VaR, CVaR, Omega, downside deviation, Ulcer Index
-9. **Signal** (15 metrics): ICs, spreads, hit-rates, and selection vs directional decomposition
+1. **Meta**: Simulation metadata and configuration
+2. **Performance**: Returns, volatility, Sharpe ratio, drawdowns
+3. **Costs**: Fees, funding, turnover, order statistics
+4. **Exposure**: Gross/net leverage metrics
+5. **Benchmark**: Alpha, beta, tracking error, information ratio (CAPM)
+6. **Distribution**: Win/loss stats, skewness, kurtosis, drawdown duration
+7. **Portfolio**: Holding periods, weights, cost ratios
+8. **Risk**: Sortino, VaR, CVaR, Omega, downside deviation, Ulcer Index
+9. **Signal**: ICs, decile spreads, hit-rates, and selection vs directional decomposition (vs next-period returns)
+
+### Additional Diagnostics (for charting)
+
+Some richer time series / grouped diagnostics are attached as `metrics.attrs[...]` for use in the tearsheet:
+
+- `metrics.attrs["equity"]`: equity curve (Series)
+- `metrics.attrs["benchmark_equity"]`: benchmark equity curve when `benchmark_asset` is provided (Series)
+- `metrics.attrs["weight_forward"]`: per-period signal diagnostics vs next returns (DataFrame), including:
+  - `ic`, `rank_ic`
+  - `top_bottom_spread`
+  - selection vs directional attribution (and per-gross variants)
+- `metrics.attrs["weight_forward_deciles"]`: mean next return by weight decile (Series)
+- `metrics.attrs["weight_forward_deciles_median"]`: median next return by weight decile (Series)
+- `metrics.attrs["weight_forward_deciles_std"]`: std dev of next return by weight decile (Series)
+- `metrics.attrs["weight_forward_deciles_count"]`: observation count `n` by weight decile (Series)
+
+`n` is the number of (asset, timestamp) observations that fell into that decile with a non-zero weight and a finite next-period return.
 
 ### Statistical Methodology
 
@@ -138,13 +161,15 @@ Alphavec follows **industry-standard statistical practices** for backtesting:
 
 This ensures alphavec metrics are directly comparable to industry benchmarks and professional analytics platforms.
 
-### New Risk Metrics (v0.2.0)
+## Tearsheet
 
-- **Sortino Ratio**: Better than Sharpe for asymmetric returns (only penalizes downside)
-- **VaR/CVaR**: Industry-standard tail risk measures (95% confidence)
-- **Omega Ratio**: Comprehensive risk-adjusted return (all moments)
-- **Gain-to-Pain**: Simple efficiency metric
-- **Ulcer Index**: Drawdown-based risk that considers duration
+The built-in `tearsheet()` renderer produces a self-contained HTML report (Plotly charts + metrics table), including:
+
+- Equity curve (portfolio and optional benchmark)
+- Drawdown
+- Rolling Sharpe (configurable via `rolling_sharpe_window`, default `30`)
+- Returns distribution
+- Signal diagnostics (when available): IC / Rank IC, top-bottom decile spread, attribution, and decile charts (mean/median/Sharpe) with per-decile `n` shown on the x-axis
 
 ## Tearsheet Example
 

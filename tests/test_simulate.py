@@ -494,4 +494,8 @@ def test_tearsheet_renders_html(tmp_path: Path):
     assert "<title>Tearsheet</title>" in html
     assert "<h1>Tearsheet</h1>" in html
     assert "Equity Curve" in html
+    assert "Median Next Return by Weight Decile" in html
+    assert "Sharpe by Weight Decile" in html
+    assert "Mean Next Return Contribution by Weight Decile" in html
+    assert "Mean Contribution by Weight Decile (Long and Short)" in html
     assert out.read_text(encoding="utf-8").startswith("<!doctype html>")
