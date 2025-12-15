@@ -28,7 +28,8 @@ Issues = "https://github.com/breaded-xyz/alphavec/issues"
 [project.optional-dependencies]
 dev = [
   "pytest",
-  "pyarrow"
+  "pyarrow",
+  "tqdm",
 ]
 
 [tool.setuptools]

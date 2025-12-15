@@ -5,6 +5,7 @@ Tearsheet rendering utilities for alphavec simulations.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
@@ -12,11 +13,15 @@ from . import metrics as _metrics_mod
 
 TEARSHEET_NOTES = _metrics_mod.TEARSHEET_NOTES
 
+if TYPE_CHECKING:
+    from .search import ParamGridResults
+
 
 def tearsheet(
     *,
     metrics: pd.DataFrame,
     returns: pd.Series,
+    grid_results: "ParamGridResults | None" = None,
     output_path: str | Path | None = None,
     signal_smooth_window: int = 30,
     rolling_sharpe_window: int = 30,
@@ -27,6 +32,7 @@ def tearsheet(
     Args:
         metrics: Metrics DataFrame produced by `simulate()`.
         returns: Portfolio period returns.
+        grid_results: Optional results from `grid_search_and_simulate()` to render heatmaps.
         output_path: Optional path to write the HTML.
         signal_smooth_window: Rolling window (in periods) used to smooth Signal time-series plots.
         rolling_sharpe_window: Rolling window (in periods) used to compute Rolling Sharpe.
@@ -712,6 +718,28 @@ def tearsheet(
             + "".join(f'<div class="plot">{p}</div>' for p in wf_plots)
         )
 
+    grid_section_html = ""
+    if grid_results is not None:
+        grid_plots = []
+        try:
+            figs = list(grid_results.heatmap_figures())
+        except Exception:
+            figs = []
+
+        for fig in figs:
+            grid_plots.append(
+                pio.to_html(fig, include_plotlyjs=False, full_html=False)
+                + _note_block(
+                    "Heatmap of objective metric over a 2D parameter grid.",
+                    "Use this to spot stable regions (plateaus) and overfit regions (isolated spikes).",
+                )
+            )
+        if len(grid_plots) > 0:
+            grid_section_html = (
+                "<h2>Parameter Search</h2>"
+                + "".join(f'<div class="plot">{p}</div>' for p in grid_plots)
+            )
+
     html = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -744,6 +772,7 @@ def tearsheet(
     <h2>Returns Distribution</h2>
     <div class="plot">{plots_html[3]}</div>
     {weights_section_html}
+    {grid_section_html}
   </body>
 </html>"""
 

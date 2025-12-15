@@ -81,7 +81,7 @@ Returns:
 
 Example:
 
-See `examples/example.ipynb`
+See `examples/simulate.ipynb`
 
 ```python
 import pandas as pd
@@ -112,6 +112,30 @@ html_str = tearsheet(
     signal_smooth_window=30,
     rolling_sharpe_window=30,
 )
+```
+
+### Parameter Search
+
+`grid_search_and_simulate()` wraps `simulate()` and runs a 2D grid search where the objective is a simulation metric (default: `Annualized Sharpe`).
+
+See `examples/search.ipynb`
+
+```python
+from alphavec import ParamGrid2D, grid_search_and_simulate
+
+results = grid_search_and_simulate(
+    generate_weights=generate_weights,  # def generate_weights(params: Mapping) -> pd.DataFrame
+    base_params={"foo": 1},
+    param_grids=[
+        ParamGrid2D("lookback", [5, 10, 20], "leverage", [0.5, 1.0, 2.0]),
+    ],
+    close_prices=close_prices,
+    order_prices=order_prices,
+)
+
+results.table
+results.heatmap_figure(grid_index=0).show()
+results.best.metrics
 ```
 
 ## Metrics

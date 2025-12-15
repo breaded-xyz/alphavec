@@ -66,3 +66,5 @@ traitlets==5.14.3
     #   nbformat
 tzdata==2025.2
     # via pandas
+tqdm
+    # via -r requirements.dev.in
