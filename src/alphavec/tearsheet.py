@@ -75,6 +75,10 @@ def tearsheet(
     """
     Render a self-contained HTML tearsheet (no JS) from metrics and returns.
 
+    The report includes performance charts and (when available) signal diagnostics such as
+    IC/Rank-IC, top-bottom decile spread, selection-vs-directional attribution, decile curves,
+    and alpha decay by lag vs next-period returns.
+
     Args:
         sim_result: Optional `SimulationResult` from `simulate()`. If omitted and `grid_results` is
             provided, the tearsheet renders from `grid_results.best.result`.

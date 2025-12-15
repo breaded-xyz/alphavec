@@ -168,6 +168,8 @@ Some richer time series / grouped diagnostics are attached as `metrics.attrs[...
 - `metrics.attrs["weight_forward_deciles_median"]`: median next return by weight decile (Series)
 - `metrics.attrs["weight_forward_deciles_std"]`: std dev of next return by weight decile (Series)
 - `metrics.attrs["weight_forward_deciles_count"]`: observation count `n` by weight decile (Series)
+- `metrics.attrs["alpha_decay_next_return_by_type"]`: alpha decay curve as a DataFrame indexed by lag (periods), with mean next return per gross and t-stats for:
+  - `total_per_gross_*`, `selection_per_gross_*`, `directional_per_gross_*`
 
 `n` is the number of (asset, timestamp) observations that fell into that decile with a non-zero weight and a finite next-period return.
 
@@ -193,7 +195,7 @@ The built-in `tearsheet()` renderer produces a self-contained HTML report (stati
 - Drawdown
 - Rolling Sharpe (configurable via `rolling_sharpe_window`, default `30`)
 - Returns distribution
-- Signal diagnostics (when available): IC / Rank IC, top-bottom decile spread, attribution, and decile charts (mean/median/Sharpe) with per-decile `n` shown on the x-axis
+- Signal diagnostics (when available): IC / Rank IC, top-bottom decile spread, attribution, alpha decay by lag (total/selection/directional), and decile charts (mean/median/Sharpe) with per-decile `n` shown on the x-axis
 
 ## Tearsheet Example
 
