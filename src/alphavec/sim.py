@@ -296,6 +296,8 @@ def simulate(
         returns=returns,
         equity=equity_series,
         init_cash=init_cash,
+        fee_pct=fee_pct,
+        slippage_pct=slippage_pct,
         freq_rule=freq_rule,
         trading_days_year=trading_days_year,
         risk_free_rate=risk_free_rate,

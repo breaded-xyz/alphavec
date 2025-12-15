@@ -110,18 +110,19 @@ html_str = tearsheet(metrics=metrics, returns=returns, output_path="tearsheet.ht
 
 ## Metrics
 
-Alphavec provides 53 comprehensive metrics across 8 categories:
+Alphavec provides 73 comprehensive metrics across 9 categories:
 
 ### Categories
 
-1. **Meta** (5 metrics): Simulation metadata and configuration
+1. **Meta** (10 metrics): Simulation metadata and configuration
 2. **Performance** (6 metrics): Returns, volatility, Sharpe ratio, drawdowns
-3. **Costs & Trading** (5 metrics): Fees, funding, turnover, order statistics
+3. **Costs** (5 metrics): Fees, funding, turnover, order statistics
 4. **Exposure** (6 metrics): Gross/net leverage metrics
 5. **Benchmark** (7 metrics): Alpha, beta, tracking error, information ratio (CAPM)
 6. **Distribution** (11 metrics): Win/loss stats, skewness, kurtosis, drawdown duration
 7. **Portfolio** (6 metrics): Holding periods, weights, cost ratios
 8. **Risk** (7 metrics): Sortino, VaR, CVaR, Omega, downside deviation, Ulcer Index
+9. **Signal** (15 metrics): ICs, spreads, hit-rates, and selection vs directional decomposition
 
 ### Statistical Methodology
 

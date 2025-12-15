@@ -490,7 +490,7 @@ def test_tearsheet_renders_html(tmp_path: Path):
     )
 
     out = tmp_path / "tearsheet.html"
-    html = tearsheet(metrics=metrics, returns=returns, output_path=out)
+    html = tearsheet(metrics=metrics, returns=returns, output_path=out, signal_smooth_window=1)
     assert "<title>Tearsheet</title>" in html
     assert "<h1>Tearsheet</h1>" in html
     assert "Equity Curve" in html

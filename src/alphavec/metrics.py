@@ -12,6 +12,11 @@ import pandas as pd
 TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Period frequency": "Sampling frequency used for annualization. Smaller periods are generally more granular (but can be noisier).",
     "Benchmark Asset": "Column name of the benchmark asset used for alpha/beta and benchmark charts (if provided).",
+    "Fee %": "Trading fee rate applied to order notional (decimal units; e.g. 0.001 = 10 bps).",
+    "Slippage %": "Slippage applied against the trader on execution prices (decimal units; e.g. 0.001 = 10 bps).",
+    "Init Cash": "Initial cash (starting equity) used for the simulation.",
+    "Trading Days Year": "Trading days per year used for annualization.",
+    "Risk Free Rate": "Annual risk-free rate used for Sharpe/Sortino (decimal units).",
     "Simulation start date": "First timestamp in the simulation index. Earlier start dates generally make estimates more statistically stable.",
     "Simulation end date": "Last timestamp in the simulation index. More recent end dates generally better reflect current market conditions.",
     "First transaction date": "First timestamp with any executed trade. Earlier is generally better (less time inactive), depending on the strategy.",
@@ -63,6 +68,21 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Omega Ratio": "Probability-weighted ratio of gains above threshold vs losses below threshold (uses 0 as threshold). Higher is generally better; values >1 mean gains outweigh losses.",
     "Gain-to-Pain Ratio": "Sum of returns divided by sum of absolute returns. Higher is generally better; measures return per unit of total volatility.",
     "Ulcer Index": "RMS (root mean square) of drawdowns, annualized. Lower is generally better; alternative drawdown-based risk measure that penalizes depth and duration.",
+    "Weight IC mean (next)": "Time-average cross-sectional correlation between weights at t and next-period asset returns (close-to-close), computed over the active universe (non-zero weights) each period.",
+    "Weight IC t-stat (next)": "t-stat of the time series of per-period weight IC values. Higher absolute values suggest more statistically reliable alignment (not a guarantee).",
+    "Weight Rank IC mean (next)": "Time-average Spearman-style (rank) IC between weights and next-period asset returns, computed over the active universe (non-zero weights) each period.",
+    "Weight Rank IC t-stat (next)": "t-stat of the time series of per-period weight rank IC values.",
+    "Top-bottom decile spread mean (next)": "Time-average next-period return spread between the top and bottom weight deciles within the active universe (assets with non-zero weights) each period.",
+    "Top-bottom decile spread t-stat (next)": "t-stat of the time series of top-minus-bottom decile spreads.",
+    "Weighted long hit rate mean (next)": "Average fraction of long gross weight placed in assets that have positive next-period returns (weights within each period). Higher is generally better.",
+    "Weighted short hit rate mean (next)": "Average fraction of short gross weight placed in assets that have negative next-period returns (weights within each period). Higher is generally better.",
+    "Forward return per gross mean (next)": "Average of (Σ w_t,i r_{t+1,i}) / (Σ |w_t,i|) each period. Normalizes for varying leverage and compares return per unit of gross weight.",
+    "Forward return selection per gross mean (next)": "Average of the cross-sectional selection component of Σ w_t,i r_{t+1,i}, normalized by gross weight (active universe, next-period). Higher is generally better.",
+    "Forward return selection per gross t-stat (next)": "t-stat of the time series of per-period selection-per-gross values.",
+    "Forward return directional per gross mean (next)": "Average of the directional component (net weight × mean next return of the active universe), normalized by gross weight (next-period). Magnitude near 0 indicates little directional dependence.",
+    "Forward return directional per gross t-stat (next)": "t-stat of the time series of per-period directional-per-gross values.",
+    "Gross weight mean": "Average gross weight (Σ |w_t,i|) across periods with available next returns. Higher implies more leverage/total exposure in the signal.",
+    "Directionality mean": "Average net-to-gross ratio (Σ w_t,i) / (Σ |w_t,i|). Values near 0 indicate market-neutral; positive is net long; negative net short.",
 }
 
 
@@ -94,6 +114,163 @@ def _annualization_factor(freq_rule: str, trading_days_year: int) -> float:
         return float(trading_days_year)
 
 
+def _t_stat(series: pd.Series) -> float:
+    s = series.dropna()
+    n = int(s.shape[0])
+    if n < 2:
+        return np.nan
+    std = float(s.std(ddof=1))
+    if not np.isfinite(std) or std == 0.0:
+        return np.nan
+    return float(s.mean() / (std / np.sqrt(n)))
+
+
+def _weight_forward_diagnostics(
+    *,
+    weights: pd.DataFrame,
+    close_prices: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.Series]:
+    w = weights.fillna(0.0).astype(float)
+    fwd = close_prices.shift(-1).divide(close_prices).subtract(1.0)
+    fwd = fwd.replace([np.inf, -np.inf], np.nan)
+
+    n_periods = int(len(w.index))
+    spread = np.full(n_periods, np.nan, dtype=float)
+    ic = np.full(n_periods, np.nan, dtype=float)
+    rank_ic = np.full(n_periods, np.nan, dtype=float)
+
+    port_fwd = np.full(n_periods, np.nan, dtype=float)
+    port_fwd_per_gross = np.full(n_periods, np.nan, dtype=float)
+    gross_w = np.full(n_periods, np.nan, dtype=float)
+    net_w = np.full(n_periods, np.nan, dtype=float)
+    directionality = np.full(n_periods, np.nan, dtype=float)
+
+    sel = np.full(n_periods, np.nan, dtype=float)
+    dirn = np.full(n_periods, np.nan, dtype=float)
+    sel_per_gross = np.full(n_periods, np.nan, dtype=float)
+    dirn_per_gross = np.full(n_periods, np.nan, dtype=float)
+
+    long_hit_w = np.full(n_periods, np.nan, dtype=float)
+    short_hit_w = np.full(n_periods, np.nan, dtype=float)
+
+    long_gross_w = np.full(n_periods, np.nan, dtype=float)
+    short_gross_w = np.full(n_periods, np.nan, dtype=float)
+    long_ret_per_gross = np.full(n_periods, np.nan, dtype=float)
+    short_ret_per_gross = np.full(n_periods, np.nan, dtype=float)
+
+    dec_sum = np.zeros(10, dtype=float)
+    dec_count = np.zeros(10, dtype=int)
+
+    w_np = w.to_numpy(dtype=float)
+    fwd_np = fwd.to_numpy(dtype=float)
+
+    for t in range(n_periods):
+        w_row = w_np[t]
+        r_row = fwd_np[t]
+        mask = np.isfinite(w_row) & np.isfinite(r_row) & (w_row != 0.0)
+        if int(np.sum(mask)) < 2:
+            continue
+
+        w_m = w_row[mask]
+        r_m = r_row[mask]
+
+        if np.std(w_m) > 0.0 and np.std(r_m) > 0.0:
+            ic[t] = float(np.corrcoef(w_m, r_m)[0, 1])
+
+        w_ranks = pd.Series(w_m).rank(method="average").to_numpy(dtype=float)
+        r_ranks = pd.Series(r_m).rank(method="average").to_numpy(dtype=float)
+        if np.std(w_ranks) > 0.0 and np.std(r_ranks) > 0.0:
+            rank_ic[t] = float(np.corrcoef(w_ranks, r_ranks)[0, 1])
+
+        gross = float(np.sum(np.abs(w_m)))
+        net = float(np.sum(w_m))
+        gross_w[t] = gross
+        net_w[t] = net
+        directionality[t] = net / gross if gross != 0.0 else np.nan
+
+        pfwd = float(np.sum(w_m * r_m))
+        port_fwd[t] = pfwd
+        port_fwd_per_gross[t] = pfwd / gross if gross != 0.0 else np.nan
+
+        mean_w = float(np.mean(w_m))
+        mean_r = float(np.mean(r_m))
+        dir_component = net * mean_r
+        sel_component = float(np.sum((w_m - mean_w) * (r_m - mean_r)))
+        dirn[t] = dir_component
+        sel[t] = sel_component
+        dirn_per_gross[t] = dir_component / gross if gross != 0.0 else np.nan
+        sel_per_gross[t] = sel_component / gross if gross != 0.0 else np.nan
+
+        long_mask = w_m > 0.0
+        if np.any(long_mask):
+            long_w_abs = np.abs(w_m[long_mask])
+            long_denom = float(long_w_abs.sum())
+            long_gross_w[t] = long_denom
+            if long_denom > 0.0:
+                long_hit_w[t] = float(long_w_abs[r_m[long_mask] > 0.0].sum() / long_denom)
+                long_ret_per_gross[t] = float(np.sum(w_m[long_mask] * r_m[long_mask]) / long_denom)
+
+        short_mask = w_m < 0.0
+        if np.any(short_mask):
+            short_w_abs = np.abs(w_m[short_mask])
+            short_denom = float(short_w_abs.sum())
+            short_gross_w[t] = short_denom
+            if short_denom > 0.0:
+                short_hit_w[t] = float(short_w_abs[r_m[short_mask] < 0.0].sum() / short_denom)
+                short_ret_per_gross[t] = float(np.sum(w_m[short_mask] * r_m[short_mask]) / short_denom)
+
+        n = int(w_m.shape[0])
+        if n >= 10:
+            order = np.argsort(w_m, kind="mergesort")
+            r_sorted = r_m[order]
+            n = int(r_sorted.shape[0])
+            dec = (np.arange(n) * 10) // n
+            bottom = r_sorted[dec == 0]
+            top = r_sorted[dec == 9]
+            if bottom.size > 0 and top.size > 0:
+                spread[t] = float(np.mean(top) - np.mean(bottom))
+
+            for d in range(10):
+                vals = r_sorted[dec == d]
+                if vals.size == 0:
+                    continue
+                dec_sum[d] += float(np.sum(vals))
+                dec_count[d] += int(vals.size)
+
+    wf = pd.DataFrame(
+        {
+            "ic": pd.Series(ic, index=w.index),
+            "rank_ic": pd.Series(rank_ic, index=w.index),
+            "top_bottom_spread": pd.Series(spread, index=w.index),
+            "forward_return": pd.Series(port_fwd, index=w.index),
+            "forward_return_per_gross": pd.Series(port_fwd_per_gross, index=w.index),
+            "forward_return_selection": pd.Series(sel, index=w.index),
+            "forward_return_directional": pd.Series(dirn, index=w.index),
+            "forward_return_selection_per_gross": pd.Series(sel_per_gross, index=w.index),
+            "forward_return_directional_per_gross": pd.Series(dirn_per_gross, index=w.index),
+            "gross_weight": pd.Series(gross_w, index=w.index),
+            "net_weight": pd.Series(net_w, index=w.index),
+            "directionality": pd.Series(directionality, index=w.index),
+            "long_hit_weighted": pd.Series(long_hit_w, index=w.index),
+            "short_hit_weighted": pd.Series(short_hit_w, index=w.index),
+            "long_gross_weight": pd.Series(long_gross_w, index=w.index),
+            "short_gross_weight": pd.Series(short_gross_w, index=w.index),
+            "long_forward_return_per_gross": pd.Series(long_ret_per_gross, index=w.index),
+            "short_forward_return_per_gross": pd.Series(short_ret_per_gross, index=w.index),
+        },
+        index=w.index,
+    )
+
+    denom = np.where(dec_count > 0, dec_count.astype(float), np.nan)
+    decile_means = dec_sum / denom
+    decile_curve = pd.Series(
+        decile_means,
+        index=pd.Index(range(1, 11), name="Decile"),
+        name="Mean next return",
+    )
+    return wf, decile_curve
+
+
 def _metrics(
     *,
     weights: pd.DataFrame,
@@ -101,6 +278,8 @@ def _metrics(
     returns: pd.Series,
     equity: pd.Series,
     init_cash: float,
+    fee_pct: float,
+    slippage_pct: float,
     freq_rule: str,
     trading_days_year: int,
     risk_free_rate: float,
@@ -122,6 +301,8 @@ def _metrics(
 
     n_periods = int(len(returns))
     n_assets = int(weights.shape[1])
+
+    wf, wf_deciles = _weight_forward_diagnostics(weights=weights, close_prices=close_prices)
 
     pnl_curve = equity - init_cash
     total_return_pct = float(equity.iloc[-1] / init_cash - 1.0)
@@ -318,6 +499,11 @@ def _metrics(
     metrics_meta = {
         "Period frequency": freq_rule,
         "Benchmark Asset": benchmark_asset,
+        "Fee %": float(fee_pct),
+        "Slippage %": float(slippage_pct),
+        "Init Cash": float(init_cash),
+        "Trading Days Year": int(trading_days_year),
+        "Risk Free Rate": float(risk_free_rate),
         "Simulation start date": weights.index.min(),
         "Simulation end date": weights.index.max(),
         "First transaction date": first_order_date,
@@ -384,17 +570,43 @@ def _metrics(
         "Gain-to-Pain Ratio": gain_to_pain,
         "Ulcer Index": ulcer_index,
     }
+    metrics_weight_vs_next = {
+        "Weight IC mean (next)": float(wf["ic"].mean(skipna=True)),
+        "Weight IC t-stat (next)": _t_stat(wf["ic"]),
+        "Weight Rank IC mean (next)": float(wf["rank_ic"].mean(skipna=True)),
+        "Weight Rank IC t-stat (next)": _t_stat(wf["rank_ic"]),
+        "Top-bottom decile spread mean (next)": float(wf["top_bottom_spread"].mean(skipna=True)),
+        "Top-bottom decile spread t-stat (next)": _t_stat(wf["top_bottom_spread"]),
+        "Weighted long hit rate mean (next)": float(wf["long_hit_weighted"].mean(skipna=True)),
+        "Weighted short hit rate mean (next)": float(wf["short_hit_weighted"].mean(skipna=True)),
+        "Forward return per gross mean (next)": float(wf["forward_return_per_gross"].mean(skipna=True)),
+        "Forward return selection per gross mean (next)": float(
+            wf["forward_return_selection_per_gross"].mean(skipna=True)
+        ),
+        "Forward return selection per gross t-stat (next)": _t_stat(
+            wf["forward_return_selection_per_gross"]
+        ),
+        "Forward return directional per gross mean (next)": float(
+            wf["forward_return_directional_per_gross"].mean(skipna=True)
+        ),
+        "Forward return directional per gross t-stat (next)": _t_stat(
+            wf["forward_return_directional_per_gross"]
+        ),
+        "Gross weight mean": float(wf["gross_weight"].mean(skipna=True)),
+        "Directionality mean": float(wf["directionality"].mean(skipna=True)),
+    }
 
     # Build complete metrics with categories
     all_metrics = [
         ("Meta", metrics_meta),
         ("Performance", metrics_performance),
-        ("Costs & Trading", metrics_costs_and_trading),
+        ("Costs", metrics_costs_and_trading),
         ("Exposure", metrics_exposure),
         ("Benchmark", metrics_benchmark),
         ("Distribution", metrics_distribution),
         ("Portfolio", metrics_portfolio),
         ("Risk", metrics_risk),
+        ("Signal", metrics_weight_vs_next),
     ]
 
     rows = []
@@ -408,8 +620,11 @@ def _metrics(
                 }
             )
 
-    return pd.DataFrame(
+    df = pd.DataFrame(
         rows,
         index=pd.Index([m for _, md in all_metrics for m in md.keys()], name="Metric"),
         columns=["Category", "Value", "Note"],
     )
+    df.attrs["weight_forward"] = wf
+    df.attrs["weight_forward_deciles"] = wf_deciles
+    return df
