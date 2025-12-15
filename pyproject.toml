@@ -13,7 +13,8 @@ authors = [{ name = "breaded-xyz" }]
 dependencies = [
   "numpy",
   "pandas",
-  "plotly",
+  "matplotlib",
+  "seaborn",
 ]
 
 classifiers = [

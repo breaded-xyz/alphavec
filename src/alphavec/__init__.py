@@ -2,20 +2,25 @@
 Public API for alphavec.
 """
 
-from .sim import simulate
+from .sim import MarketData, SimConfig, SimulationResult, simulate
 from .search import (
-    ParamGridBest,
-    ParamGrid2D,
-    ParamGridResults,
-    grid_search_and_simulate,
+    Grid2D,
+    GridSearchBest,
+    GridSearchResults,
+    grid_search,
 )
+from .metrics import TEARSHEET_NOTES
 from .tearsheet import tearsheet
 
 __all__ = [
     "simulate",
     "tearsheet",
-    "ParamGridBest",
-    "ParamGrid2D",
-    "ParamGridResults",
-    "grid_search_and_simulate",
+    "SimulationResult",
+    "MarketData",
+    "SimConfig",
+    "TEARSHEET_NOTES",
+    "grid_search",
+    "Grid2D",
+    "GridSearchBest",
+    "GridSearchResults",
 ]

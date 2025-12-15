@@ -1,9 +1,14 @@
 """
 Tearsheet rendering utilities for alphavec simulations.
+
+Produces a single self-contained HTML document with static (non-JS) charts rendered via
+Matplotlib/Seaborn and embedded as base64 PNGs.
 """
 
 from __future__ import annotations
 
+from base64 import b64encode
+from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,50 +19,99 @@ from . import metrics as _metrics_mod
 TEARSHEET_NOTES = _metrics_mod.TEARSHEET_NOTES
 
 if TYPE_CHECKING:
-    from .search import ParamGridResults
+    from matplotlib.figure import Figure
+
+    from .search import GridSearchResults
+    from .sim import SimulationResult
+
+
+def _fig_to_base64_png(fig: "Figure", *, dpi: int = 160) -> str:
+    buf = BytesIO()
+    fig.savefig(
+        buf,
+        format="png",
+        dpi=dpi,
+        bbox_inches="tight",
+        facecolor="white",
+        edgecolor="white",
+    )
+    return b64encode(buf.getvalue()).decode("ascii")
+
+
+def _note_block(definition: str, interpretation: str) -> str:
+    return (
+        '<div class="note">'
+        f"<strong>Definition:</strong> {definition}<br>"
+        f"<strong>Interpretation:</strong> {interpretation}"
+        "</div>"
+    )
+
+
+def _plot_block(*, title: str, fig: "Figure", note: tuple[str, str] | None = None) -> str:
+    import matplotlib.pyplot as plt
+
+    try:
+        png_b64 = _fig_to_base64_png(fig)
+    finally:
+        plt.close(fig)
+    note_html = "" if note is None else _note_block(note[0], note[1])
+    return (
+        '<div class="plot">'
+        f"<h3>{title}</h3>"
+        f'<img alt="{title}" src="data:image/png;base64,{png_b64}"/>'
+        f"{note_html}"
+        "</div>"
+    )
 
 
 def tearsheet(
     *,
-    metrics: pd.DataFrame,
-    returns: pd.Series,
-    grid_results: "ParamGridResults | None" = None,
+    sim_result: "SimulationResult | None" = None,
+    grid_results: "GridSearchResults | None" = None,
     output_path: str | Path | None = None,
     signal_smooth_window: int = 30,
     rolling_sharpe_window: int = 30,
 ) -> str:
     """
-    Render a self-contained HTML tearsheet (Plotly charts) from metrics and returns.
+    Render a self-contained HTML tearsheet (no JS) from metrics and returns.
 
     Args:
-        metrics: Metrics DataFrame produced by `simulate()`.
-        returns: Portfolio period returns.
-        grid_results: Optional results from `grid_search_and_simulate()` to render heatmaps.
+        sim_result: Optional `SimulationResult` from `simulate()`. If omitted and `grid_results` is
+            provided, the tearsheet renders from `grid_results.best.result`.
+        grid_results: Optional results from `grid_search()` to render heatmaps (and
+            optionally supply `best` as the simulation source).
         output_path: Optional path to write the HTML.
         signal_smooth_window: Rolling window (in periods) used to smooth Signal time-series plots.
         rolling_sharpe_window: Rolling window (in periods) used to compute Rolling Sharpe.
+
+    Returns:
+        The rendered HTML document as a string. If `output_path` is provided, the same HTML is also
+        written to disk as UTF-8.
     """
 
-    import plotly.graph_objects as go
-    import plotly.io as pio
     import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
 
-    def _note_block(definition: str, interpretation: str) -> str:
-        return (
-            '<div class="note">'
-            f"<strong>Definition:</strong> {definition}<br>"
-            f"<strong>Interpretation:</strong> {interpretation}"
-            "</div>"
-        )
+    sns.set_theme(style="whitegrid")
+    plt.rcParams.update(
+        {
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "savefig.facecolor": "white",
+            "savefig.edgecolor": "white",
+        }
+    )
 
-    def _roll_mean(s: pd.Series, window: int) -> pd.Series:
-        if window <= 1:
-            return s
-        min_periods = max(3, window // 5)
-        return s.rolling(window=window, min_periods=min_periods).mean()
+    if sim_result is not None:
+        pass
+    elif grid_results is not None and grid_results.best is not None:
+        sim_result = grid_results.best.result
+    else:
+        raise TypeError("Missing required argument: `sim_result` (or pass `grid_results` with a `best`).")
 
-    def _zero_line(fig: go.Figure) -> None:
-        fig.add_hline(y=0.0, line_width=1, line_dash="dot", line_color="#999999")
+    metrics = sim_result.metrics
+    returns = sim_result.returns
 
     def _metric_value(metric: str, default: object) -> object:
         try:
@@ -71,7 +125,6 @@ def tearsheet(
         benchmark_asset = metrics.loc["Benchmark Asset", "Value"]
 
     init_cash = float(metrics.attrs.get("init_cash", 1.0))
-    equity: pd.Series
     if isinstance(metrics.attrs.get("equity"), pd.Series):
         equity = metrics.attrs["equity"]
     else:
@@ -82,49 +135,20 @@ def tearsheet(
     if not isinstance(benchmark_equity, pd.Series):
         benchmark_equity = None
 
-    equity_pct = equity / float(init_cash) - 1.0
-    equity_pct = (equity_pct * 100.0).rename("Portfolio %")
+    equity_pct = (equity / float(init_cash) - 1.0) * 100.0
+    equity_pct = equity_pct.rename("Portfolio %")
 
     benchmark_equity_pct: pd.Series | None = None
     if benchmark_equity is not None and len(benchmark_equity) == len(equity):
-        benchmark_equity_pct = benchmark_equity / float(init_cash) - 1.0
+        benchmark_equity_pct = (benchmark_equity / float(init_cash) - 1.0) * 100.0
         label = (
             f"Benchmark ({benchmark_asset}) %"
             if isinstance(benchmark_asset, str) and benchmark_asset
             else "Benchmark %"
         )
-        benchmark_equity_pct = (benchmark_equity_pct * 100.0).rename(label)
+        benchmark_equity_pct = benchmark_equity_pct.rename(label)
 
-    dd = equity / equity.cummax() - 1.0
-    dd_pct = (dd * 100.0).rename("Drawdown %")
-
-    equity_fig = go.Figure()
-    equity_fig.add_trace(go.Scatter(x=equity_pct.index, y=equity_pct, name=equity_pct.name))
-    if benchmark_equity_pct is not None:
-        equity_fig.add_trace(
-            go.Scatter(
-                x=benchmark_equity_pct.index,
-                y=benchmark_equity_pct,
-                name=benchmark_equity_pct.name,
-            )
-        )
-    equity_fig.update_layout(
-        title="Equity Curve (Cumulative Return %)",
-        xaxis_title="Date",
-        yaxis_title="Cumulative return (%)",
-        legend_title="Series",
-        template="plotly_white",
-    )
-
-    dd_fig = go.Figure()
-    dd_fig.add_trace(go.Scatter(x=dd_pct.index, y=dd_pct, name=dd_pct.name, fill="tozeroy"))
-    dd_fig.update_layout(
-        title="Drawdown (%)",
-        xaxis_title="Date",
-        yaxis_title="Drawdown (%)",
-        template="plotly_white",
-        showlegend=False,
-    )
+    dd_pct = (equity / equity.cummax() - 1.0) * 100.0
 
     try:
         rolling_window = max(2, int(rolling_sharpe_window))
@@ -143,33 +167,210 @@ def tearsheet(
     roll_mean = excess.rolling(window=rolling_window, min_periods=min_periods).mean()
     roll_std = excess.rolling(window=rolling_window, min_periods=min_periods).std(ddof=1)
     rolling_sharpe = (roll_mean / roll_std) * np.sqrt(annual_factor)
-    rolling_sharpe = rolling_sharpe.rename(f"Rolling Sharpe ({rolling_window}p)")
 
-    rolling_sharpe_fig = go.Figure()
-    rolling_sharpe_fig.add_trace(
-        go.Scatter(x=rolling_sharpe.index, y=rolling_sharpe, name=rolling_sharpe.name)
-    )
-    _zero_line(rolling_sharpe_fig)
-    rolling_sharpe_fig.update_layout(
-        title=f"Rolling Sharpe ({rolling_window} periods)",
-        xaxis_title="Date",
-        yaxis_title="Sharpe",
-        template="plotly_white",
-        showlegend=False,
+    # Metrics table
+    table_html = metrics.copy()
+    table_html.index.name = "Metric"
+    metrics_table = table_html.to_html(classes="metrics", escape=True)
+    metrics_table = metrics_table.replace("\\n", "<br>")
+
+    plots_html: list[str] = []
+
+    # Equity
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(equity_pct.index, equity_pct.values, label=equity_pct.name)
+    if benchmark_equity_pct is not None:
+        ax.plot(benchmark_equity_pct.index, benchmark_equity_pct.values, label=benchmark_equity_pct.name)
+    ax.set_title("Equity Curve (Cumulative Return %)")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Cumulative return (%)")
+    ax.legend(loc="best")
+    plots_html.append(
+        _plot_block(
+            title="Equity Curve (Cumulative Return %)",
+            fig=fig,
+            note=(
+                "Portfolio cumulative return (%) over time, optionally compared to a benchmark.",
+                "Upward sloping is good; compare vs benchmark for relative performance and watch for regime changes.",
+            ),
+        )
     )
 
-    returns_pct = (returns.fillna(0.0) * 100.0).rename("Returns (%)")
-    dist_fig = go.Figure()
-    dist_fig.add_trace(go.Histogram(x=returns_pct, nbinsx=60, name=returns_pct.name))
-    dist_fig.update_layout(
-        title="Returns Distribution (%)",
-        xaxis_title="Return (%)",
-        yaxis_title="Count",
-        template="plotly_white",
-        showlegend=False,
+    # Drawdown
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+    ax.plot(dd_pct.index, dd_pct.values, color="#1f77b4")
+    ax.fill_between(dd_pct.index, dd_pct.values, 0.0, alpha=0.25, color="#1f77b4")
+    ax.set_title("Drawdown (%)")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Drawdown (%)")
+    plots_html.append(
+        _plot_block(
+            title="Drawdown (%)",
+            fig=fig,
+            note=(
+                "Percent drawdown from the running peak of the equity curve.",
+                "More negative and longer-lasting drawdowns indicate higher risk; evaluate depth and recovery speed.",
+            ),
+        )
     )
+
+    # Rolling Sharpe
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+    ax.plot(rolling_sharpe.index, rolling_sharpe.values, color="#1f77b4")
+    ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+    ax.set_title(f"Rolling Sharpe ({rolling_window} periods)")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Sharpe")
+    plots_html.append(
+        _plot_block(
+            title=f"Rolling Sharpe ({rolling_window} periods)",
+            fig=fig,
+            note=(
+                f"Rolling {rolling_window}-period Sharpe ratio (annualized), computed from per-period excess returns.",
+                "Higher and stable is better; sustained negative values indicate persistent underperformance vs the risk-free rate.",
+            ),
+        )
+    )
+
+    # Return distribution
+    returns_pct = returns.fillna(0.0) * 100.0
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+    ax.hist(returns_pct.values, bins=60, color="#1f77b4", alpha=0.8)
+    ax.set_title("Returns Distribution (%)")
+    ax.set_xlabel("Return (%)")
+    ax.set_ylabel("Count")
+    plots_html.append(
+        _plot_block(
+            title="Returns Distribution (%)",
+            fig=fig,
+            note=(
+                "Histogram of period returns (%).",
+                "Skew and fat tails matter: a positive mean with a negative median suggests outlier-driven performance.",
+            ),
+        )
+    )
+
+    # Signal diagnostics
+    def _roll_mean(s: pd.Series, window: int) -> pd.Series:
+        if window <= 1:
+            return s
+        min_periods = max(3, window // 5)
+        return s.rolling(window=window, min_periods=min_periods).mean()
+
+    try:
+        smooth_window = max(1, int(signal_smooth_window))
+    except Exception:
+        smooth_window = 30
+
+    signal_blocks: list[str] = []
 
     wf = metrics.attrs.get("weight_forward")
+    if isinstance(wf, pd.DataFrame) and len(wf.index) > 0:
+        # IC / Rank IC
+        if ("ic" in wf.columns) or ("rank_ic" in wf.columns):
+            fig, ax = plt.subplots(figsize=(10, 3.5))
+            if "ic" in wf.columns:
+                ic = pd.to_numeric(wf["ic"], errors="coerce")
+                if smooth_window > 1:
+                    ax.plot(ic.index, ic.values, label="IC (raw)", linewidth=1, alpha=0.25)
+                ax.plot(
+                    ic.index,
+                    _roll_mean(ic, smooth_window).values,
+                    label=f"IC ({smooth_window}p mean)",
+                    linewidth=2,
+                )
+            if "rank_ic" in wf.columns:
+                ric = pd.to_numeric(wf["rank_ic"], errors="coerce")
+                if smooth_window > 1:
+                    ax.plot(ric.index, ric.values, label="Rank IC (raw)", linewidth=1, alpha=0.25)
+                ax.plot(
+                    ric.index,
+                    _roll_mean(ric, smooth_window).values,
+                    label=f"Rank IC ({smooth_window}p mean)",
+                    linewidth=2,
+                )
+            ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+            ax.set_title("Signal: IC (Smoothed)")
+            ax.set_xlabel("Date")
+            ax.set_ylabel("Correlation")
+            ax.legend(loc="best")
+            signal_blocks.append(
+                _plot_block(
+                    title="Signal: IC (Smoothed)",
+                    fig=fig,
+                    note=(
+                        "Per-period cross-sectional correlation between weights at t and next-period returns (IC), with a rolling mean overlay.",
+                        "Sustained positive values suggest predictive alignment; noisy or near-zero values suggest a weak or unstable signal.",
+                    ),
+                )
+            )
+
+        # Top-bottom spread
+        if "top_bottom_spread" in wf.columns:
+            spread = pd.to_numeric(wf["top_bottom_spread"], errors="coerce") * 100.0
+            fig, ax = plt.subplots(figsize=(10, 3.5))
+            if smooth_window > 1:
+                ax.plot(spread.index, spread.values, label="Spread (raw)", linewidth=1, alpha=0.25)
+            ax.plot(
+                spread.index,
+                _roll_mean(spread, smooth_window).values,
+                label=f"Spread ({smooth_window}p mean)",
+                linewidth=2,
+            )
+            ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+            ax.set_title("Signal: Top-Bottom Decile Spread (%)")
+            ax.set_xlabel("Date")
+            ax.set_ylabel("Spread (%)")
+            ax.legend(loc="best")
+            signal_blocks.append(
+                _plot_block(
+                    title="Signal: Top-Bottom Decile Spread (%)",
+                    fig=fig,
+                    note=(
+                        "Next-period return spread (%) between the top and bottom weight deciles each period, with a rolling mean overlay.",
+                        "Positive and stable spread indicates separation between high- and low-weighted assets; instability often indicates regime dependence.",
+                    ),
+                )
+            )
+
+        # Selection vs directional (per gross)
+        sel_col = "forward_return_selection_per_gross"
+        dir_col = "forward_return_directional_per_gross"
+        if (sel_col in wf.columns) or (dir_col in wf.columns):
+            fig, ax = plt.subplots(figsize=(10, 3.5))
+            if sel_col in wf.columns:
+                sel = pd.to_numeric(wf[sel_col], errors="coerce") * 100.0
+                ax.plot(
+                    sel.index,
+                    _roll_mean(sel, smooth_window).values,
+                    label=f"Selection ({smooth_window}p mean)",
+                    linewidth=2,
+                )
+            if dir_col in wf.columns:
+                dirn = pd.to_numeric(wf[dir_col], errors="coerce") * 100.0
+                ax.plot(
+                    dirn.index,
+                    _roll_mean(dirn, smooth_window).values,
+                    label=f"Directional ({smooth_window}p mean)",
+                    linewidth=2,
+                )
+            ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+            ax.set_title("Signal: Attribution (Per Gross, %)")
+            ax.set_xlabel("Date")
+            ax.set_ylabel("Contribution (%)")
+            ax.legend(loc="best")
+            signal_blocks.append(
+                _plot_block(
+                    title="Signal: Attribution (Per Gross, %)",
+                    fig=fig,
+                    note=(
+                        "Rolling decomposition of forward return per unit gross weight into selection vs directional components.",
+                        "Selection reflects cross-sectional picking skill; directional reflects net bias interacting with the average universe return.",
+                    ),
+                )
+            )
+
+    # Deciles
     wf_deciles = metrics.attrs.get("weight_forward_deciles")
     wf_deciles_median = metrics.attrs.get("weight_forward_deciles_median")
     wf_deciles_std = metrics.attrs.get("weight_forward_deciles_std")
@@ -177,267 +378,52 @@ def tearsheet(
     wf_deciles_contrib = metrics.attrs.get("weight_forward_deciles_contrib")
     wf_deciles_contrib_long = metrics.attrs.get("weight_forward_deciles_contrib_long")
     wf_deciles_contrib_short = metrics.attrs.get("weight_forward_deciles_contrib_short")
-
-    wf_ic_fig = None
-    wf_spread_fig = None
-    wf_attrib_fig = None
-    wf_deciles_fig = None
-    wf_deciles_median_fig = None
-    wf_deciles_sharpe_fig = None
-    wf_deciles_contrib_fig = None
-    wf_deciles_contrib_ls_fig = None
-    wf_ic_dist_fig = None
-    wf_spread_dist_fig = None
-
-    if isinstance(wf, pd.DataFrame) and len(wf.index) > 0:
-        smooth_window = max(1, int(signal_smooth_window))
-
-        wf_ic_fig = go.Figure()
-        if "ic" in wf.columns:
-            ic = wf["ic"]
-            wf_ic_fig.add_trace(
-                go.Scatter(
-                    x=ic.index,
-                    y=ic,
-                    name="IC (raw)",
-                    mode="lines",
-                    line=dict(width=1),
-                    opacity=0.25,
-                    visible="legendonly",
-                )
-            )
-            wf_ic_fig.add_trace(
-                go.Scatter(
-                    x=ic.index,
-                    y=_roll_mean(ic, smooth_window),
-                    name=f"IC ({smooth_window}p mean)",
-                    mode="lines",
-                    line=dict(width=2),
-                )
-            )
-        if "rank_ic" in wf.columns:
-            ric = wf["rank_ic"]
-            wf_ic_fig.add_trace(
-                go.Scatter(
-                    x=ric.index,
-                    y=ric,
-                    name="Rank IC (raw)",
-                    mode="lines",
-                    line=dict(width=1),
-                    opacity=0.25,
-                    visible="legendonly",
-                )
-            )
-            wf_ic_fig.add_trace(
-                go.Scatter(
-                    x=ric.index,
-                    y=_roll_mean(ric, smooth_window),
-                    name=f"Rank IC ({smooth_window}p mean)",
-                    mode="lines",
-                    line=dict(width=2),
-                )
-            )
-        _zero_line(wf_ic_fig)
-        wf_ic_fig.update_layout(
-            title="Signal: IC",
-            xaxis_title="Date",
-            yaxis_title="Correlation",
-            template="plotly_white",
-            legend_title="Series",
-        )
-
-        if "top_bottom_spread" in wf.columns:
-            spread_pct = (wf["top_bottom_spread"] * 100.0).rename("Top - Bottom (deciles) %")
-            wf_spread_fig = go.Figure()
-            wf_spread_fig.add_trace(
-                go.Scatter(
-                    x=spread_pct.index,
-                    y=spread_pct,
-                    name=f"{spread_pct.name} (raw)",
-                    mode="lines",
-                    line=dict(width=1),
-                    opacity=0.25,
-                    visible="legendonly",
-                )
-            )
-            wf_spread_fig.add_trace(
-                go.Scatter(
-                    x=spread_pct.index,
-                    y=_roll_mean(spread_pct, smooth_window),
-                    name=f"{spread_pct.name} ({smooth_window}p mean)",
-                    mode="lines",
-                    line=dict(width=2),
-                )
-            )
-            _zero_line(wf_spread_fig)
-            wf_spread_fig.update_layout(
-                title="Signal: Top-Bottom Decile Spread (%)",
-                xaxis_title="Date",
-                yaxis_title="Spread (%)",
-                template="plotly_white",
-                legend_title="Series",
-            )
-
-        if (
-            "forward_return_selection_per_gross" in wf.columns
-            or "forward_return_directional_per_gross" in wf.columns
-        ):
-            wf_attrib_fig = go.Figure()
-            if "forward_return_selection_per_gross" in wf.columns:
-                sel = (wf["forward_return_selection_per_gross"] * 100.0).rename("Selection (per gross) %")
-                wf_attrib_fig.add_trace(
-                    go.Scatter(
-                        x=sel.index,
-                        y=sel,
-                        name=f"{sel.name} (raw)",
-                        mode="lines",
-                        line=dict(width=1),
-                        opacity=0.25,
-                        visible="legendonly",
-                    )
-                )
-                wf_attrib_fig.add_trace(
-                    go.Scatter(
-                        x=sel.index,
-                        y=_roll_mean(sel, smooth_window),
-                        name=f"{sel.name} ({smooth_window}p mean)",
-                        mode="lines",
-                        line=dict(width=2),
-                    )
-                )
-            if "forward_return_directional_per_gross" in wf.columns:
-                direc = (wf["forward_return_directional_per_gross"] * 100.0).rename(
-                    "Directional (per gross) %"
-                )
-                wf_attrib_fig.add_trace(
-                    go.Scatter(
-                        x=direc.index,
-                        y=direc,
-                        name=f"{direc.name} (raw)",
-                        mode="lines",
-                        line=dict(width=1),
-                        opacity=0.25,
-                        visible="legendonly",
-                    )
-                )
-                wf_attrib_fig.add_trace(
-                    go.Scatter(
-                        x=direc.index,
-                        y=_roll_mean(direc, smooth_window),
-                        name=f"{direc.name} ({smooth_window}p mean)",
-                        mode="lines",
-                        line=dict(width=2),
-                    )
-                )
-            _zero_line(wf_attrib_fig)
-            wf_attrib_fig.update_layout(
-                title="Signal: Forward Return Attribution (per gross, next)",
-                xaxis_title="Date",
-                yaxis_title="Return (%)",
-                template="plotly_white",
-                legend_title="Series",
-            )
-
-        if "ic" in wf.columns or "rank_ic" in wf.columns:
-            wf_ic_dist_fig = go.Figure()
-            if "ic" in wf.columns:
-                wf_ic_dist_fig.add_trace(go.Histogram(x=wf["ic"].dropna(), nbinsx=60, name="IC"))
-            if "rank_ic" in wf.columns:
-                wf_ic_dist_fig.add_trace(
-                    go.Histogram(x=wf["rank_ic"].dropna(), nbinsx=60, name="Rank IC")
-                )
-            wf_ic_dist_fig.update_layout(
-                title="Signal: IC Distribution",
-                xaxis_title="Correlation",
-                yaxis_title="Count",
-                template="plotly_white",
-                barmode="overlay",
-            )
-            wf_ic_dist_fig.update_traces(opacity=0.6)
-
-        if "top_bottom_spread" in wf.columns:
-            wf_spread_dist_fig = go.Figure()
-            wf_spread_dist_fig.add_trace(
-                go.Histogram(x=(wf["top_bottom_spread"] * 100.0).dropna(), nbinsx=60, name="Spread (%)")
-            )
-            wf_spread_dist_fig.update_layout(
-                title="Signal: Decile Spread Distribution (%)",
-                xaxis_title="Spread (%)",
-                yaxis_title="Count",
-                template="plotly_white",
-                showlegend=False,
-            )
-
     if isinstance(wf_deciles, pd.Series) and len(wf_deciles.index) > 0:
-        counts: pd.Series | None = None
+        counts = None
         if isinstance(wf_deciles_count, pd.Series) and len(wf_deciles_count.index) > 0:
             counts = wf_deciles_count.reindex(wf_deciles.index)
         x = wf_deciles.index.astype(int).to_numpy()
-        ticktext = None
-        customdata = None
+        y = (wf_deciles * 100.0).to_numpy(dtype=float)
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        ax.bar(x, y, color="#1f77b4", alpha=0.9)
+        ax.set_title("Signal: Mean Next Return by Weight Decile")
+        ax.set_xlabel("Weight decile (active universe)")
+        ax.set_ylabel("Mean next return (%)")
         if counts is not None:
-            counts_int = counts.fillna(0.0).astype(int).to_numpy()
-            ticktext = [f"{d}<br>n={n}" for d, n in zip(x, counts_int)]
-            customdata = counts_int
-
-        wf_deciles_fig = go.Figure()
-        wf_deciles_fig.add_trace(
-            go.Bar(
-                x=x,
-                y=(wf_deciles * 100.0),
-                name="Mean next return (%)",
-                customdata=customdata,
-                hovertemplate=(
-                    "Decile=%{x}<br>Mean next return=%{y:.4f}%<br>n=%{customdata}<extra></extra>"
-                    if customdata is not None
-                    else "Decile=%{x}<br>Mean next return=%{y:.4f}%<extra></extra>"
+            ax.set_xticks(x, [f"{d}\n(n={int(n)})" for d, n in zip(x, counts.fillna(0).astype(int))])
+        signal_blocks.append(
+            _plot_block(
+                title="Signal: Mean Next Return by Weight Decile",
+                fig=fig,
+                note=(
+                    "Mean next-period return (%) by weight decile, computed over the active universe (non-zero weights).",
+                    "A healthy signal typically shows monotonic separation (top deciles outperform bottom), and reasonable per-decile sample sizes (n).",
                 ),
             )
-        )
-        if ticktext is not None:
-            wf_deciles_fig.update_xaxes(tickmode="array", tickvals=x, ticktext=ticktext)
-        wf_deciles_fig.update_layout(
-            title="Signal: Mean Next Return by Weight Decile",
-            xaxis_title="Weight decile (active universe)",
-            yaxis_title="Mean next return (%)",
-            template="plotly_white",
-            showlegend=False,
         )
 
     if isinstance(wf_deciles_median, pd.Series) and len(wf_deciles_median.index) > 0:
-        counts: pd.Series | None = None
+        counts = None
         if isinstance(wf_deciles_count, pd.Series) and len(wf_deciles_count.index) > 0:
             counts = wf_deciles_count.reindex(wf_deciles_median.index)
         x = wf_deciles_median.index.astype(int).to_numpy()
-        ticktext = None
-        customdata = None
+        y = (wf_deciles_median * 100.0).to_numpy(dtype=float)
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        ax.bar(x, y, color="#1f77b4", alpha=0.9)
+        ax.set_title("Signal: Median Next Return by Weight Decile")
+        ax.set_xlabel("Weight decile (active universe)")
+        ax.set_ylabel("Median next return (%)")
         if counts is not None:
-            counts_int = counts.fillna(0.0).astype(int).to_numpy()
-            ticktext = [f"{d}<br>n={n}" for d, n in zip(x, counts_int)]
-            customdata = counts_int
-
-        wf_deciles_median_fig = go.Figure()
-        wf_deciles_median_fig.add_trace(
-            go.Bar(
-                x=x,
-                y=(wf_deciles_median * 100.0),
-                name="Median next return (%)",
-                customdata=customdata,
-                hovertemplate=(
-                    "Decile=%{x}<br>Median next return=%{y:.4f}%<br>n=%{customdata}<extra></extra>"
-                    if customdata is not None
-                    else "Decile=%{x}<br>Median next return=%{y:.4f}%<extra></extra>"
+            ax.set_xticks(x, [f"{d}\n(n={int(n)})" for d, n in zip(x, counts.fillna(0).astype(int))])
+        signal_blocks.append(
+            _plot_block(
+                title="Signal: Median Next Return by Weight Decile",
+                fig=fig,
+                note=(
+                    "Median next-period return (%) by weight decile, computed over the active universe (non-zero weights).",
+                    "Less sensitive to outliers than the mean; if mean is strong but median is weak, performance may be outlier-driven.",
                 ),
             )
-        )
-        if ticktext is not None:
-            wf_deciles_median_fig.update_xaxes(tickmode="array", tickvals=x, ticktext=ticktext)
-        wf_deciles_median_fig.update_layout(
-            title="Signal: Median Next Return by Weight Decile",
-            xaxis_title="Weight decile (active universe)",
-            yaxis_title="Median next return (%)",
-            template="plotly_white",
-            showlegend=False,
         )
 
     if (
@@ -449,79 +435,54 @@ def tearsheet(
         std = wf_deciles_std.reindex(wf_deciles.index)
         mean_excess = wf_deciles - rf_per_period
         sharpe = (mean_excess / std) * np.sqrt(annual_factor)
-        sharpe = sharpe.replace([np.inf, -np.inf], np.nan).rename("Sharpe (annualized)")
-
-        counts: pd.Series | None = None
+        sharpe = sharpe.replace([np.inf, -np.inf], np.nan)
+        counts = None
         if isinstance(wf_deciles_count, pd.Series) and len(wf_deciles_count.index) > 0:
             counts = wf_deciles_count.reindex(sharpe.index)
         x = sharpe.index.astype(int).to_numpy()
-        ticktext = None
-        customdata = None
+        y = sharpe.to_numpy(dtype=float)
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        ax.bar(x, y, color="#1f77b4", alpha=0.9)
+        ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+        ax.set_title("Signal: Sharpe by Weight Decile (Annualized)")
+        ax.set_xlabel("Weight decile (active universe)")
+        ax.set_ylabel("Sharpe (annualized)")
         if counts is not None:
-            counts_int = counts.fillna(0.0).astype(int).to_numpy()
-            ticktext = [f"{d}<br>n={n}" for d, n in zip(x, counts_int)]
-            customdata = counts_int
-
-        wf_deciles_sharpe_fig = go.Figure()
-        wf_deciles_sharpe_fig.add_trace(
-            go.Bar(
-                x=x,
-                y=sharpe,
-                name=sharpe.name,
-                customdata=customdata,
-                hovertemplate=(
-                    "Decile=%{x}<br>Sharpe=%{y:.4f}<br>n=%{customdata}<extra></extra>"
-                    if customdata is not None
-                    else "Decile=%{x}<br>Sharpe=%{y:.4f}<extra></extra>"
+            ax.set_xticks(x, [f"{d}\n(n={int(n)})" for d, n in zip(x, counts.fillna(0).astype(int))])
+        signal_blocks.append(
+            _plot_block(
+                title="Signal: Sharpe by Weight Decile (Annualized)",
+                fig=fig,
+                note=(
+                    "Annualized Sharpe by decile: mean(next return − risk-free per period) / std(next return), annualized.",
+                    "Higher is better; instability or extreme values often indicate small n or a very noisy decile return series.",
                 ),
             )
-        )
-        _zero_line(wf_deciles_sharpe_fig)
-        if ticktext is not None:
-            wf_deciles_sharpe_fig.update_xaxes(tickmode="array", tickvals=x, ticktext=ticktext)
-        wf_deciles_sharpe_fig.update_layout(
-            title="Signal: Sharpe by Weight Decile (Annualized)",
-            xaxis_title="Weight decile (active universe)",
-            yaxis_title="Sharpe",
-            template="plotly_white",
-            showlegend=False,
         )
 
     if isinstance(wf_deciles_contrib, pd.Series) and len(wf_deciles_contrib.index) > 0:
-        counts: pd.Series | None = None
+        counts = None
         if isinstance(wf_deciles_count, pd.Series) and len(wf_deciles_count.index) > 0:
             counts = wf_deciles_count.reindex(wf_deciles_contrib.index)
         x = wf_deciles_contrib.index.astype(int).to_numpy()
-        ticktext = None
-        customdata = None
+        y = (wf_deciles_contrib * 100.0).to_numpy(dtype=float)
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        ax.bar(x, y, color="#1f77b4", alpha=0.9)
+        ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+        ax.set_title("Signal: Mean Next Return Contribution by Weight Decile")
+        ax.set_xlabel("Weight decile (active universe)")
+        ax.set_ylabel("Mean contribution to next return (%)")
         if counts is not None:
-            counts_int = counts.fillna(0.0).astype(int).to_numpy()
-            ticktext = [f"{d}<br>n={n}" for d, n in zip(x, counts_int)]
-            customdata = counts_int
-
-        wf_deciles_contrib_fig = go.Figure()
-        wf_deciles_contrib_fig.add_trace(
-            go.Bar(
-                x=x,
-                y=(wf_deciles_contrib * 100.0),
-                name="Mean contribution (%)",
-                customdata=customdata,
-                hovertemplate=(
-                    "Decile=%{x}<br>Mean contribution=%{y:.6f}%<br>n=%{customdata}<extra></extra>"
-                    if customdata is not None
-                    else "Decile=%{x}<br>Mean contribution=%{y:.6f}%<extra></extra>"
+            ax.set_xticks(x, [f"{d}\n(n={int(n)})" for d, n in zip(x, counts.fillna(0).astype(int))])
+        signal_blocks.append(
+            _plot_block(
+                title="Signal: Mean Next Return Contribution by Weight Decile",
+                fig=fig,
+                note=(
+                    "Mean contribution to next-period portfolio return (%) by weight decile.",
+                    "Shows which deciles drive portfolio PnL; ideally contribution aligns with intended signal shape (e.g., top deciles contribute positively).",
                 ),
             )
-        )
-        _zero_line(wf_deciles_contrib_fig)
-        if ticktext is not None:
-            wf_deciles_contrib_fig.update_xaxes(tickmode="array", tickvals=x, ticktext=ticktext)
-        wf_deciles_contrib_fig.update_layout(
-            title="Signal: Mean Next Return Contribution by Weight Decile",
-            xaxis_title="Weight decile (active universe)",
-            yaxis_title="Mean contribution to next return (%)",
-            template="plotly_white",
-            showlegend=False,
         )
 
     if (
@@ -530,215 +491,73 @@ def tearsheet(
         and len(wf_deciles_contrib_long.index) > 0
         and len(wf_deciles_contrib_short.index) > 0
     ):
-        long_c = wf_deciles_contrib_long.reindex(wf_deciles_contrib_short.index)
-        short_c = wf_deciles_contrib_short
-
-        counts: pd.Series | None = None
+        long_c = wf_deciles_contrib_long
+        short_c = wf_deciles_contrib_short.reindex(long_c.index)
+        counts = None
         if isinstance(wf_deciles_count, pd.Series) and len(wf_deciles_count.index) > 0:
-            counts = wf_deciles_count.reindex(short_c.index)
-        x = short_c.index.astype(int).to_numpy()
-        ticktext = None
-        customdata = None
+            counts = wf_deciles_count.reindex(long_c.index)
+        x = long_c.index.astype(int).to_numpy()
+        long_y = (long_c * 100.0).to_numpy(dtype=float)
+        short_y = (short_c * 100.0).to_numpy(dtype=float)
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        ax.bar(x, long_y, label="Long contribution (%)", color="#1f77b4", alpha=0.9)
+        ax.bar(x, short_y, bottom=long_y, label="Short contribution (%)", color="#ff7f0e", alpha=0.9)
+        ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+        ax.set_title("Signal: Mean Contribution by Weight Decile (Long and Short)")
+        ax.set_xlabel("Weight decile (active universe)")
+        ax.set_ylabel("Mean contribution to next return (%)")
+        ax.legend(loc="best")
         if counts is not None:
-            counts_int = counts.fillna(0.0).astype(int).to_numpy()
-            ticktext = [f"{d}<br>n={n}" for d, n in zip(x, counts_int)]
-            customdata = counts_int
-
-        wf_deciles_contrib_ls_fig = go.Figure()
-        wf_deciles_contrib_ls_fig.add_trace(
-            go.Bar(
-                x=x,
-                y=(long_c * 100.0),
-                name="Long contribution (%)",
-                customdata=customdata,
-                hovertemplate=(
-                    "Decile=%{x}<br>Long contrib=%{y:.6f}%<br>n=%{customdata}<extra></extra>"
-                    if customdata is not None
-                    else "Decile=%{x}<br>Long contrib=%{y:.6f}%<extra></extra>"
+            ax.set_xticks(x, [f"{d}\n(n={int(n)})" for d, n in zip(x, counts.fillna(0).astype(int))])
+        signal_blocks.append(
+            _plot_block(
+                title="Signal: Mean Contribution by Weight Decile (Long and Short)",
+                fig=fig,
+                note=(
+                    "Mean next-period return contribution (%) by decile, split into long vs short sides.",
+                    "Helps distinguish selection vs directional effects; large asymmetry can indicate a side-specific edge or unintended bias.",
                 ),
             )
         )
-        wf_deciles_contrib_ls_fig.add_trace(
-            go.Bar(
-                x=x,
-                y=(short_c * 100.0),
-                name="Short contribution (%)",
-                customdata=customdata,
-                hovertemplate=(
-                    "Decile=%{x}<br>Short contrib=%{y:.6f}%<br>n=%{customdata}<extra></extra>"
-                    if customdata is not None
-                    else "Decile=%{x}<br>Short contrib=%{y:.6f}%<extra></extra>"
-                ),
-            )
-        )
-        _zero_line(wf_deciles_contrib_ls_fig)
-        if ticktext is not None:
-            wf_deciles_contrib_ls_fig.update_xaxes(tickmode="array", tickvals=x, ticktext=ticktext)
-        wf_deciles_contrib_ls_fig.update_layout(
-            title="Signal: Mean Contribution by Weight Decile (Long and Short)",
-            xaxis_title="Weight decile (active universe)",
-            yaxis_title="Mean contribution to next return (%)",
-            template="plotly_white",
-            barmode="relative",
-            legend_title="Series",
-        )
 
-    table_html = metrics.copy()
-    table_html.index.name = "Metric"
-    metrics_table = table_html.to_html(classes="metrics", escape=True)
-    metrics_table = metrics_table.replace("\\n", "<br>")
+    signal_section_html = ""
+    if len(signal_blocks) > 0:
+        signal_section_html = "<h2>Signal</h2>" + "".join(signal_blocks)
 
-    plots_html = []
-    plots_html.append(
-        pio.to_html(equity_fig, include_plotlyjs=True, full_html=False)
-        + _note_block(
-            "Portfolio cumulative return (%) over time, optionally compared to a benchmark.",
-            "Upward sloping is good; compare vs benchmark for relative performance and watch for regime changes.",
-        )
-    )
-    plots_html.append(
-        pio.to_html(dd_fig, include_plotlyjs=False, full_html=False)
-        + _note_block(
-            "Percent drawdown from the running peak of the equity curve.",
-            "More negative and longer-lasting drawdowns indicate higher risk; evaluate depth and recovery speed.",
-        )
-    )
-    plots_html.append(
-        pio.to_html(rolling_sharpe_fig, include_plotlyjs=False, full_html=False)
-        + _note_block(
-            f"Rolling {rolling_window}-period Sharpe ratio: rolling mean(excess return) / rolling std(excess return), annualized.",
-            "Higher and stable is better; sustained negative values indicate persistent underperformance vs the risk-free rate.",
-        )
-    )
-    plots_html.append(
-        pio.to_html(dist_fig, include_plotlyjs=False, full_html=False)
-        + _note_block(
-            "Histogram of period returns (%).",
-            "Skew and fat tails matter: a positive mean with a negative median suggests outlier-driven performance.",
-        )
-    )
+    # Parameter search heatmaps
+    search_section_html = ""
+    if grid_results is not None and len(grid_results.param_grids) > 0:
+        heatmaps: list[str] = []
+        for i, grid in enumerate(grid_results.param_grids):
+            z = grid_results.pivot(grid_index=i)
+            z_num = z.apply(pd.to_numeric, errors="coerce")
+            fig, ax = plt.subplots(
+                figsize=(max(6.0, 0.6 * z_num.shape[1] + 2.0), max(4.0, 0.55 * z_num.shape[0] + 2.0))
+            )
+            sns.heatmap(
+                z_num,
+                ax=ax,
+                cmap="RdBu_r",
+                center=0.0,
+                cbar_kws={"label": grid_results.objective_metric},
+            )
+            ax.set_title(f"{grid_results.objective_metric} heatmap ({grid.label()})")
+            ax.set_xlabel(grid.param2_name)
+            ax.set_ylabel(grid.param1_name)
+            fig.tight_layout()
+            heatmaps.append(
+                _plot_block(
+                    title=f"{grid_results.objective_metric} heatmap ({grid.label()})",
+                    fig=fig,
+                    note=(
+                        f"Objective value ({grid_results.objective_metric}) across the 2D parameter grid.",
+                        "Look for stable regions (broad plateaus) rather than isolated spikes to reduce overfitting risk.",
+                    ),
+                )
+            )
+        search_section_html = "<h2>Parameter Search</h2>" + "".join(heatmaps)
 
-    weights_section_html = ""
-    if (
-        wf_ic_fig is not None
-        or wf_spread_fig is not None
-        or wf_attrib_fig is not None
-        or wf_deciles_fig is not None
-        or wf_deciles_median_fig is not None
-        or wf_deciles_sharpe_fig is not None
-        or wf_deciles_contrib_fig is not None
-        or wf_deciles_contrib_ls_fig is not None
-        or wf_ic_dist_fig is not None
-        or wf_spread_dist_fig is not None
-    ):
-        wf_plots = []
-        if wf_ic_fig is not None:
-            wf_plots.append(
-                pio.to_html(wf_ic_fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Per-period cross-sectional correlation between weights and next-period returns (IC), with an optional rolling mean overlay.",
-                    "Positive IC means higher weights tend to predict higher next returns; noisy IC suggests weak or unstable signal.",
-                )
-            )
-        if wf_spread_fig is not None:
-            wf_plots.append(
-                pio.to_html(wf_spread_fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Per-period difference between mean next returns of the top weight decile and bottom weight decile.",
-                    "A consistently positive spread indicates a monotonic signal; negative/flat spread suggests weak ranking power.",
-                )
-            )
-        if wf_attrib_fig is not None:
-            wf_plots.append(
-                pio.to_html(wf_attrib_fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Decomposition of next-period portfolio return into selection vs directional components (per gross exposure).",
-                    "Selection reflects cross-sectional ranking skill; directional reflects net bias. Large directional can imply unintended market exposure.",
-                )
-            )
-        if wf_deciles_fig is not None:
-            wf_plots.append(
-                pio.to_html(wf_deciles_fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Mean next-period return of assets in each weight decile (bucketed each period by sorting non-zero weights).",
-                    "Should be increasing with decile for a good long signal; does not account for portfolio sizing—use contribution charts for PnL impact.",
-                )
-            )
-        if wf_deciles_median_fig is not None:
-            wf_plots.append(
-                pio.to_html(wf_deciles_median_fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Median next-period return of assets in each weight decile.",
-                    "More robust than the mean; big gaps vs the mean indicate skew/outliers driving results.",
-                )
-            )
-        if wf_deciles_sharpe_fig is not None:
-            wf_plots.append(
-                pio.to_html(wf_deciles_sharpe_fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Annualized Sharpe computed across all decile observations: mean(excess next return) / std(next return).",
-                    "Higher is better risk-adjusted ranking; low `n` makes estimates noisy, and near-zero std can distort results.",
-                )
-            )
-        if wf_deciles_contrib_fig is not None:
-            wf_plots.append(
-                pio.to_html(wf_deciles_contrib_fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Mean next-period portfolio contribution per decile: average of (weight × next return) across observations.",
-                    "Directly answers which buckets help/hurt PnL; negative bars identify deciles where your sizing and direction are misaligned with next returns.",
-                )
-            )
-        if wf_deciles_contrib_ls_fig is not None:
-            wf_plots.append(
-                pio.to_html(wf_deciles_contrib_ls_fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Same as contribution-by-decile, split into contributions from long weights and short weights within each decile.",
-                    "Shows whether long/short legs are working; a negative short contribution means shorts tend to rise (hurting performance), and vice versa.",
-                )
-            )
-        if wf_ic_dist_fig is not None:
-            wf_plots.append(
-                pio.to_html(wf_ic_dist_fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Histogram of per-period IC / Rank IC values.",
-                    "A distribution shifted above 0 indicates consistent predictive power; wide distributions indicate instability.",
-                )
-            )
-        if wf_spread_dist_fig is not None:
-            wf_plots.append(
-                pio.to_html(wf_spread_dist_fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Histogram of per-period top-minus-bottom decile spreads.",
-                    "A distribution centered above 0 supports a useful ranking signal; frequent negative spreads indicate inversion or regime sensitivity.",
-                )
-            )
-
-        weights_section_html = (
-            "<h2>Signal</h2>"
-            + "".join(f'<div class="plot">{p}</div>' for p in wf_plots)
-        )
-
-    grid_section_html = ""
-    if grid_results is not None:
-        grid_plots = []
-        try:
-            figs = list(grid_results.heatmap_figures())
-        except Exception:
-            figs = []
-
-        for fig in figs:
-            grid_plots.append(
-                pio.to_html(fig, include_plotlyjs=False, full_html=False)
-                + _note_block(
-                    "Heatmap of objective metric over a 2D parameter grid.",
-                    "Use this to spot stable regions (plateaus) and overfit regions (isolated spikes).",
-                )
-            )
-        if len(grid_plots) > 0:
-            grid_section_html = (
-                "<h2>Parameter Search</h2>"
-                + "".join(f'<div class="plot">{p}</div>' for p in grid_plots)
-            )
+    plots_section = "<h2>Performance</h2>" + "".join(plots_html) + signal_section_html + search_section_html
 
     html = f"""<!doctype html>
 <html lang="en">
@@ -747,34 +566,30 @@ def tearsheet(
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tearsheet</title>
     <style>
-      body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }}
-      h1 {{ margin: 0 0 16px 0; }}
-      h2 {{ margin: 28px 0 12px 0; }}
-      table.metrics {{ border-collapse: collapse; width: 100%; background-color: #ffffff; color: #000000; }}
-      table.metrics th, table.metrics td {{ border: 1px solid #ddd; padding: 8px; vertical-align: top; }}
-      table.metrics th {{ background: #f6f6f6; text-align: left; }}
-      table.metrics tr, table.metrics th, table.metrics td {{ text-align: left !important; }}
-      table.metrics td:nth-child(4) {{ white-space: pre-line; }}
-      .plot {{ margin-top: 12px; }}
-      .note {{ margin-top: 8px; background-color: #ffffff; color: #444444; font-size: 0.95rem; line-height: 1.35; }}
-      .note strong {{ background-color: #ffffff; color: #111111; font-weight: 600; }}
+      .alphavec-tearsheet {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; padding: 24px; background: #ffffff; color: #000000; }}
+      .alphavec-tearsheet h1 {{ margin: 0 0 16px 0; }}
+      .alphavec-tearsheet h2 {{ margin: 28px 0 12px 0; }}
+      .alphavec-tearsheet h3 {{ margin: 18px 0 10px 0; font-size: 1.05rem; }}
+      .alphavec-tearsheet table.metrics {{ border-collapse: collapse; width: 100%; background-color: #ffffff; color: #000000; }}
+      .alphavec-tearsheet table.metrics th, .alphavec-tearsheet table.metrics td {{ border: 1px solid #ddd; padding: 8px; vertical-align: top; }}
+      .alphavec-tearsheet table.metrics th {{ background: #f6f6f6; text-align: left; }}
+      .alphavec-tearsheet table.metrics tr, .alphavec-tearsheet table.metrics th, .alphavec-tearsheet table.metrics td {{ text-align: left !important; }}
+      .alphavec-tearsheet table.metrics td:nth-child(4) {{ white-space: pre-line; }}
+      .alphavec-tearsheet .plot {{ margin-top: 12px; }}
+      .alphavec-tearsheet .plot img {{ max-width: 100%; height: auto; border: 1px solid #eee; background: #fff; }}
+      .alphavec-tearsheet .note {{ margin-top: 8px; background: #ffffff; color: #444444; font-size: 0.95rem; line-height: 1.35; }}
+      .alphavec-tearsheet .note strong {{ color: #111111; font-weight: 600; }}
     </style>
   </head>
   <body>
-    <h1>Tearsheet</h1>
-    {metrics_table}
-    <h2>Equity</h2>
-    <div class="plot">{plots_html[0]}</div>
-    <h2>Drawdown</h2>
-    <div class="plot">{plots_html[1]}</div>
-    <h2>Rolling Sharpe</h2>
-    <div class="plot">{plots_html[2]}</div>
-    <h2>Returns Distribution</h2>
-    <div class="plot">{plots_html[3]}</div>
-    {weights_section_html}
-    {grid_section_html}
+    <div class="alphavec-tearsheet">
+      <h1>Tearsheet</h1>
+      {metrics_table}
+      {plots_section}
+    </div>
   </body>
-</html>"""
+</html>
+"""
 
     if output_path is not None:
         Path(output_path).write_text(html, encoding="utf-8")

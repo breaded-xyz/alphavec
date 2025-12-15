@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from alphavec import ParamGrid2D, grid_search_and_simulate, simulate
+from alphavec import Grid2D, MarketData, SimConfig, grid_search, simulate
 
 
 def test_search_and_simulate_matches_simulate_for_one_point():
@@ -23,7 +23,7 @@ def test_search_and_simulate_matches_simulate_for_one_point():
         return raw.div(denom, axis=0).fillna(0.0)
 
     sets = [
-        ParamGrid2D(
+        Grid2D(
             param1_name="lookback",
             param1_values=[2, 5],
             param2_name="power",
@@ -31,22 +31,22 @@ def test_search_and_simulate_matches_simulate_for_one_point():
         )
     ]
 
-    results = grid_search_and_simulate(
+    results = grid_search(
         generate_weights=generate_weights,
         base_params={},
         param_grids=sets,
         objective_metric="Annualized Sharpe",
         max_workers=2,
-        close_prices=close_prices,
-        order_prices=order_prices,
-        funding_rates=None,
-        init_cash=1000.0,
-        fee_pct=0.0,
-        slippage_pct=0.0,
-        order_notional_min=0.0,
-        freq_rule="1D",
-        trading_days_year=365,
-        risk_free_rate=0.0,
+        market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
+        config=SimConfig(
+            init_cash=1000.0,
+            fee_rate=0.0,
+            slippage_rate=0.0,
+            order_notional_min=0.0,
+            freq_rule="1D",
+            trading_days_year=365,
+            risk_free_rate=0.0,
+        ),
     )
 
     assert results.objective_metric == "Annualized Sharpe"
@@ -58,19 +58,19 @@ def test_search_and_simulate_matches_simulate_for_one_point():
     assert list(grid.columns) == [0.5, 1.0]
 
     weights = generate_weights({"lookback": 2, "power": 1.0})
-    _returns, metrics = simulate(
+    metrics = simulate(
         weights=weights,
-        close_prices=close_prices,
-        order_prices=order_prices,
-        funding_rates=None,
-        init_cash=1000.0,
-        fee_pct=0.0,
-        slippage_pct=0.0,
-        order_notional_min=0.0,
-        freq_rule="1D",
-        trading_days_year=365,
-        risk_free_rate=0.0,
-    )
+        market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
+        config=SimConfig(
+            init_cash=1000.0,
+            fee_rate=0.0,
+            slippage_rate=0.0,
+            order_notional_min=0.0,
+            freq_rule="1D",
+            trading_days_year=365,
+            risk_free_rate=0.0,
+        ),
+    ).metrics
     expected = float(metrics.loc["Annualized Sharpe", "Value"])
 
     row = results.table[
@@ -80,6 +80,6 @@ def test_search_and_simulate_matches_simulate_for_one_point():
 
     best_obj = pd.to_numeric(results.table["objective_value"], errors="coerce").max()
     assert float(results.best.objective_value) == pytest.approx(float(best_obj))
-    assert float(results.best.metrics.loc["Annualized Sharpe", "Value"]) == pytest.approx(
+    assert float(results.best.result.metrics.loc["Annualized Sharpe", "Value"]) == pytest.approx(
         float(results.best.objective_value)
     )

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from alphavec import ParamGrid2D, grid_search_and_simulate, tearsheet
+from alphavec import Grid2D, MarketData, SimConfig, grid_search, tearsheet
 
 
 def test_tearsheet_renders_grid_heatmaps():
@@ -26,11 +26,11 @@ def test_tearsheet_renders_grid_heatmaps():
         w = raw.div(denom, axis=0).fillna(0.0)
         return w * leverage
 
-    results = grid_search_and_simulate(
+    results = grid_search(
         generate_weights=generate_weights,
         base_params={},
         param_grids=[
-            ParamGrid2D(
+            Grid2D(
                 param1_name="lookback",
                 param1_values=[5, 10],
                 param2_name="leverage",
@@ -39,13 +39,11 @@ def test_tearsheet_renders_grid_heatmaps():
         ],
         objective_metric="Annualized Sharpe",
         max_workers=2,
-        close_prices=close_prices,
-        order_prices=order_prices,
-        funding_rates=None,
+        market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
+        config=SimConfig(),
     )
     assert results.best is not None
 
-    html = tearsheet(metrics=results.best.metrics, returns=results.best.returns, grid_results=results)
+    html = tearsheet(grid_results=results)
     assert "<h2>Parameter Search</h2>" in html
     assert results.param_grids[0].label() in html
-

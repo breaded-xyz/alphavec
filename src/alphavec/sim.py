@@ -35,6 +35,70 @@ class _RunOutputs:
     first_order_date: pd.Timestamp | None
 
 
+@dataclass(frozen=True)
+class SimulationResult:
+    """
+    Result object returned by `simulate()`.
+    """
+
+    returns: pd.Series
+    metrics: pd.DataFrame
+
+    @property
+    def equity(self) -> pd.Series | None:
+        equity = self.metrics.attrs.get("equity")
+        return equity if isinstance(equity, pd.Series) else None
+
+    @property
+    def benchmark_equity(self) -> pd.Series | None:
+        bench = self.metrics.attrs.get("benchmark_equity")
+        return bench if isinstance(bench, pd.Series) else None
+
+    def metric_value(self, metric: str, *, default: object = None) -> object:
+        try:
+            v = self.metrics.loc[metric, "Value"]
+        except Exception:
+            return default
+        return default if pd.isna(v) else v
+
+    def tearsheet(
+        self,
+        *,
+        grid_results=None,
+        output_path=None,
+        signal_smooth_window: int = 30,
+        rolling_sharpe_window: int = 30,
+    ) -> str:
+        from .tearsheet import tearsheet
+
+        return tearsheet(
+            sim_result=self,
+            grid_results=grid_results,
+            output_path=output_path,
+            signal_smooth_window=signal_smooth_window,
+            rolling_sharpe_window=rolling_sharpe_window,
+        )
+
+
+@dataclass(frozen=True)
+class MarketData:
+    close_prices: pd.DataFrame | pd.Series
+    order_prices: pd.DataFrame | pd.Series | None = None
+    funding_rates: pd.DataFrame | pd.Series | None = None
+
+
+@dataclass(frozen=True)
+class SimConfig:
+    init_cash: float = 1000.0
+    benchmark_asset: str | None = None
+    order_notional_min: float = 0.0
+    fee_rate: float = 0.0
+    slippage_rate: float = 0.0
+    freq_rule: str = "1D"
+    trading_days_year: int = 365
+    risk_free_rate: float = 0.0
+
+
 def _to_frame(x: pd.DataFrame | pd.Series, name: str) -> pd.DataFrame:
     if isinstance(x, pd.Series):
         return x.to_frame(name=x.name or name)
@@ -45,12 +109,12 @@ def _normalize_inputs(
     *,
     weights: pd.DataFrame | pd.Series,
     close_prices: pd.DataFrame | pd.Series,
-    order_prices: pd.DataFrame | pd.Series,
+    order_prices: pd.DataFrame | pd.Series | None,
     funding_rates: pd.DataFrame | pd.Series | None,
 ) -> _Inputs:
     w = _to_frame(weights, "weights").astype(float)
     cp = _to_frame(close_prices, "close_prices").astype(float)
-    op = _to_frame(order_prices, "order_prices").astype(float)
+    op = _to_frame(order_prices, "order_prices").astype(float) if order_prices is not None else None
     fr = (
         _to_frame(funding_rates, "funding_rates").astype(float)
         if funding_rates is not None
@@ -70,7 +134,10 @@ def _normalize_inputs(
         return df.reindex(index=index, columns=columns)
 
     cp = _align(cp, "close_prices")
-    op = _align(op, "order_prices")
+    if op is None:
+        op = cp.copy()
+    else:
+        op = _align(op, "order_prices")
     if fr is None:
         fr = pd.DataFrame(0.0, index=index, columns=columns)
     else:
@@ -86,8 +153,8 @@ def _run_simulation(
     *,
     inputs: _Inputs,
     init_cash: float,
-    fee_pct: float,
-    slippage_pct: float,
+    fee_rate: float,
+    slippage_rate: float,
     order_notional_min: float,
 ) -> _RunOutputs:
     """
@@ -115,8 +182,8 @@ def _run_simulation(
 
     first_order_date: pd.Timestamp | None = None
 
-    slip = float(slippage_pct)
-    fee_rate = float(fee_pct)
+    slip = float(slippage_rate)
+    fee_rate = float(fee_rate)
     min_notional = float(order_notional_min)
 
     last_op = np.full(n_assets, np.nan, dtype=float)
@@ -233,57 +300,74 @@ def _run_simulation(
 def simulate(
     *,
     weights: pd.DataFrame | pd.Series,
-    close_prices: pd.DataFrame | pd.Series,
-    order_prices: pd.DataFrame | pd.Series,
-    funding_rates: pd.DataFrame | pd.Series | None = None,
-    benchmark_asset: str | None = None,
-    order_notional_min: float = 0.0,
-    fee_pct: float = 0.0,
-    slippage_pct: float = 0.0,
-    init_cash: float = 1000.0,
-    freq_rule: str = "1D",
-    trading_days_year: int = 365,
-    risk_free_rate: float = 0.0,
-) -> tuple[pd.Series, pd.DataFrame]:
+    market: MarketData,
+    config: SimConfig | None = None,
+) -> SimulationResult:
     """
-    Simulate a perpetual futures portfolio from target weights.
+    Simulate a (vectorized) perpetual futures portfolio from target weights.
+
+    This implements a simple rebalancing/perp accounting model:
+
+    - Value the portfolio at the start of each period using the **order** price.
+    - Convert target weights into target notionals (`target_notional = weights * equity_before`).
+    - Trade the notional difference at the order price (with optional slippage), paying fees on
+      absolute order notional.
+    - Mark-to-market the resulting positions using the **close** price to produce end-of-period
+      equity and returns.
+    - Apply per-period funding to close notional (positive rates mean longs pay and shorts earn).
+
+    Missing data is handled to keep the simulation robust to temporary gaps:
+
+    - `weights` NaNs are treated as 0 targets.
+    - If an asset's `order_prices` is NaN for a period, opening/rebalancing that asset is skipped
+      for that period; however, positions can still be closed using the last observed order price.
+    - If an asset's `close_prices` is NaN for a period, PnL and funding are forced to 0 for that
+      asset in that period (positions remain valued using the last observed close for equity
+      continuity).
+
+    The returned `metrics` table also includes helpful series in `metrics.attrs` that downstream
+    utilities (e.g. `tearsheet()`) can use for richer reporting.
 
     Args:
         weights: Target percentage portfolio weights. Positive=long, negative=short.
             Weights are in decimal units (1.0=100%). NaN weights are treated as 0.0 targets.
-        close_prices: Close prices used for period PnL. NaNs indicate an asset is not tradable;
-            the last close price is carried forward for valuation and PnL is 0 for that period.
-        order_prices: Order execution prices (before slippage). NaNs indicate an asset is not tradable
-            for opening/rebalancing; the last order price is carried forward to allow closing.
-        funding_rates: Per-period signed funding rates; +ve means longs pay, shorts earn. NaNs are
-            treated as 0, and funding is always 0 when close price is NaN.
-        benchmark_asset: Optional asset column name to compute alpha and beta against.
-        order_notional_min: Skip non-closing orders below this notional.
-        fee_pct: Fee percentage on order notional.
-        slippage_pct: Slippage percentage applied against the trader.
-        init_cash: Starting capital.
-        freq_rule: Pandas frequency rule for the data periodicity.
-        trading_days_year: Trading days per year for annualization.
-        risk_free_rate: Risk free rate for Sharpe.
+        market: Market data inputs (close/order prices and optional funding).
+        config: Simulation configuration (costs, annualization, benchmark, init cash).
 
     Returns:
-        Portfolio period returns as a pandas Series.
-        Metrics as a pandas DataFrame with Value and Note columns.
+        A tuple `(returns, metrics)`:
+
+        - `returns`: Period returns as a pandas Series aligned to `weights.index`. The first period
+          return is 0.0 (because there is no prior equity for `pct_change()`).
+        - `metrics`: Summary statistics as a pandas DataFrame with `Value` and `Note` columns.
+          Extra artifacts are attached via `metrics.attrs`, including:
+
+          - `metrics.attrs["returns"]`: The returned `returns` series.
+          - `metrics.attrs["equity"]`: The simulated equity curve (same index as `returns`).
+          - `metrics.attrs["init_cash"]`: The initial cash used for the simulation.
+          - `metrics.attrs["benchmark_equity"]`: Benchmark equity curve (only when
+            `benchmark_asset` is provided and present in `close_prices`).
+
+    Raises:
+        ValueError: If `weights` does not use a DatetimeIndex or if the price/funding inputs do not
+            contain the full `weights` index/column set.
     """
+
+    cfg = config or SimConfig()
 
     inputs = _normalize_inputs(
         weights=weights,
-        close_prices=close_prices,
-        order_prices=order_prices,
-        funding_rates=funding_rates,
+        close_prices=market.close_prices,
+        order_prices=market.order_prices,
+        funding_rates=market.funding_rates,
     )
 
     run = _run_simulation(
         inputs=inputs,
-        init_cash=init_cash,
-        fee_pct=fee_pct,
-        slippage_pct=slippage_pct,
-        order_notional_min=order_notional_min,
+        init_cash=cfg.init_cash,
+        fee_rate=cfg.fee_rate,
+        slippage_rate=cfg.slippage_rate,
+        order_notional_min=cfg.order_notional_min,
     )
 
     equity_series = pd.Series(run.equity, index=inputs.weights.index, name="equity")
@@ -295,13 +379,13 @@ def simulate(
         close_prices=inputs.close_prices,
         returns=returns,
         equity=equity_series,
-        init_cash=init_cash,
-        fee_pct=fee_pct,
-        slippage_pct=slippage_pct,
-        freq_rule=freq_rule,
-        trading_days_year=trading_days_year,
-        risk_free_rate=risk_free_rate,
-        benchmark_asset=benchmark_asset,
+        init_cash=cfg.init_cash,
+        fee_pct=cfg.fee_rate,
+        slippage_pct=cfg.slippage_rate,
+        freq_rule=cfg.freq_rule,
+        trading_days_year=cfg.trading_days_year,
+        risk_free_rate=cfg.risk_free_rate,
+        benchmark_asset=cfg.benchmark_asset,
         first_order_date=run.first_order_date,
         fees_paid=run.fees_paid,
         funding_earned=run.funding_earned,
@@ -316,15 +400,15 @@ def simulate(
 
     metrics.attrs["returns"] = returns
     metrics.attrs["equity"] = equity_series
-    metrics.attrs["init_cash"] = float(init_cash)
+    metrics.attrs["init_cash"] = float(cfg.init_cash)
 
-    if benchmark_asset is not None and benchmark_asset in inputs.close_prices.columns:
-        bench_prices = inputs.close_prices[benchmark_asset].copy().ffill().bfill()
+    if cfg.benchmark_asset is not None and cfg.benchmark_asset in inputs.close_prices.columns:
+        bench_prices = inputs.close_prices[cfg.benchmark_asset].copy().ffill().bfill()
         if bench_prices.notna().any():
             first = float(bench_prices.iloc[0])
             if np.isfinite(first) and first != 0.0:
-                metrics.attrs["benchmark_equity"] = (init_cash * bench_prices / first).rename(
+                metrics.attrs["benchmark_equity"] = (cfg.init_cash * bench_prices / first).rename(
                     "benchmark_equity"
                 )
 
-    return returns, metrics
+    return SimulationResult(returns=returns, metrics=metrics)

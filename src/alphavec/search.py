@@ -12,11 +12,11 @@ import concurrent.futures as cf
 import numpy as np
 import pandas as pd
 
-from .sim import simulate
+from .sim import MarketData, SimConfig, SimulationResult, simulate
 
 
 @dataclass(frozen=True)
-class ParamGrid2D:
+class Grid2D:
     """
     A 2D parameter grid definition over two parameter axes.
     """
@@ -32,9 +32,9 @@ class ParamGrid2D:
 
 
 @dataclass(frozen=True)
-class ParamGridBest:
+class GridSearchBest:
     """
-    Best scoring simulation from `grid_search_and_simulate`.
+    Best scoring simulation from `grid_search`.
     """
 
     grid_index: int
@@ -42,20 +42,19 @@ class ParamGridBest:
     params: dict[str, Any]
     objective_metric: str
     objective_value: float
-    returns: pd.Series
-    metrics: pd.DataFrame
+    result: SimulationResult
 
 
 @dataclass(frozen=True)
-class ParamGridResults:
+class GridSearchResults:
     """
-    Consolidated results from `grid_search_and_simulate`.
+    Consolidated results from `grid_search`.
     """
 
     table: pd.DataFrame
-    param_grids: tuple[ParamGrid2D, ...]
+    param_grids: tuple[Grid2D, ...]
     objective_metric: str
-    best: ParamGridBest | None
+    best: GridSearchBest | None
 
     def pivot(self, *, grid_index: int = 0) -> pd.DataFrame:
         s = self.param_grids[grid_index]
@@ -71,39 +70,48 @@ class ParamGridResults:
         *,
         grid_index: int = 0,
         title: str | None = None,
-        colorscale: str = "RdBu",
-        zmid: float | None = 0.0,
+        cmap: str = "RdBu_r",
+        center: float | None = 0.0,
+        annot: bool = False,
+        fmt: str = ".3g",
     ):
-        import plotly.graph_objects as go
+        import matplotlib.pyplot as plt
+        import seaborn as sns
 
         s = self.param_grids[grid_index]
         z = self.pivot(grid_index=grid_index)
-        fig = go.Figure(
-            data=go.Heatmap(
-                z=z.to_numpy(),
-                x=[str(x) for x in z.columns],
-                y=[str(y) for y in z.index],
-                colorscale=colorscale,
-                zmid=zmid,
-                colorbar=dict(title=self.objective_metric),
-            )
+
+        z_num = z.apply(pd.to_numeric, errors="coerce")
+        nrows, ncols = z_num.shape
+        fig_w = max(6.0, 0.6 * ncols + 2.0)
+        fig_h = max(4.0, 0.55 * nrows + 2.0)
+
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        sns.heatmap(
+            z_num,
+            ax=ax,
+            cmap=cmap,
+            center=center,
+            annot=annot,
+            fmt=fmt,
+            cbar_kws={"label": self.objective_metric},
         )
-        fig.update_layout(
-            title=title or f"{self.objective_metric} heatmap ({s.label()})",
-            xaxis_title=s.param2_name,
-            yaxis_title=s.param1_name,
-            template="plotly_white",
-        )
+        ax.set_title(title or f"{self.objective_metric} heatmap ({s.label()})")
+        ax.set_xlabel(s.param2_name)
+        ax.set_ylabel(s.param1_name)
+        fig.tight_layout()
         return fig
 
     def heatmap_figures(
         self,
         *,
-        colorscale: str = "RdBu",
-        zmid: float | None = 0.0,
+        cmap: str = "RdBu_r",
+        center: float | None = 0.0,
+        annot: bool = False,
+        fmt: str = ".3g",
     ) -> list:
         return [
-            self.heatmap_figure(grid_index=i, colorscale=colorscale, zmid=zmid)
+            self.heatmap_figure(grid_index=i, cmap=cmap, center=center, annot=annot, fmt=fmt)
             for i in range(len(self.param_grids))
         ]
 
@@ -112,7 +120,9 @@ def _objective_value(metrics: pd.DataFrame, objective_metric: str) -> float:
     if objective_metric not in metrics.index:
         available = [str(x) for x in metrics.index]
         preview = available[:25]
-        suffix = "" if len(available) <= len(preview) else f" … (+{len(available) - len(preview)} more)"
+        suffix = (
+            "" if len(available) <= len(preview) else f" … (+{len(available) - len(preview)} more)"
+        )
         raise KeyError(
             f"objective_metric {objective_metric!r} not found in metrics.index. "
             f"Available metrics: {preview}{suffix}"
@@ -120,52 +130,75 @@ def _objective_value(metrics: pd.DataFrame, objective_metric: str) -> float:
     return float(metrics.loc[objective_metric, "Value"])
 
 
-def grid_search_and_simulate(
+def grid_search(
     *,
     generate_weights: Callable[[Mapping[str, Any]], pd.DataFrame | pd.Series],
     objective_metric: str = "Annualized Sharpe",
     base_params: Mapping[str, Any],
-    param_grids: Collection[ParamGrid2D],
+    param_grids: Collection[Grid2D],
     progress: bool = False,
     progress_desc: str | None = None,
     max_workers: int | None = None,
-    close_prices: pd.DataFrame | pd.Series,
-    order_prices: pd.DataFrame | pd.Series,
-    funding_rates: pd.DataFrame | pd.Series | None = None,
-    benchmark_asset: str | None = None,
-    order_notional_min: float = 0.0,
-    fee_pct: float = 0.0,
-    slippage_pct: float = 0.0,
-    init_cash: float = 1000.0,
-    freq_rule: str = "1D",
-    trading_days_year: int = 365,
-    risk_free_rate: float = 0.0,
+    market: MarketData,
+    config: SimConfig | None = None,
     executor: cf.Executor | None = None,
-) -> ParamGridResults:
+) -> GridSearchResults:
     """
-    Run a 2D parameter grid search where the objective is a simulation metric.
+    Run one or more 2D parameter grid searches where the objective is a simulation metric.
 
-    For each combination in each `ParamGrid2D`:
-      - Merge `base_params` with the (param1, param2) override.
-      - Generate weights via `generate_weights(merged_params)`.
-      - Run `simulate()` with the generated weights and the provided market data.
-      - Extract `objective_metric` from the returned metrics table.
-      - Store the objective value for visualization (e.g. heatmaps).
+    For each `(param1_value, param2_value)` combination in each `Grid2D`:
+
+    - Merge `base_params` with the two overrides to form a single parameter mapping.
+    - Call `generate_weights(merged_params)` to produce the target weights for the run.
+    - Run `simulate()` with the generated weights and the provided market data.
+    - Read `objective_metric` from the returned metrics table
+      (`metrics.loc[objective_metric, "Value"]`).
+    - Record the objective value into an output table suitable for pivoting/heatmaps.
+
+    Runs are executed concurrently via an executor (a `ThreadPoolExecutor` is created by default).
+    After all runs finish, the function selects the best result by **maximizing** the recorded
+    objective value (ignoring NaN/inf), then re-runs `simulate()` for that best parameter pair to
+    populate `GridSearchResults.best` with the best `SimulationResult`.
+
+    Args:
+        generate_weights: Callable that takes a parameter dictionary as input and generates a weights DataFrame/Series
+            compatible with `simulate()`.
+        objective_metric: Name of the metric (row label) to maximize from the `simulate()` metrics table.
+        base_params: Base parameter mapping passed to `generate_weights` for every run.
+        param_grids: One or more 2D grids. Each grid searches two named parameters over their value sequences.
+        progress: If True, show a progress bar (requires `tqdm`).
+        progress_desc: Optional custom progress bar description.
+        max_workers: Maximum worker threads used when this function creates its own executor.
+        market: Market data passed through to `simulate()`.
+        config: Simulation config passed through to `simulate()`.
+        executor: Optional `concurrent.futures.Executor`. If provided, it is used and not shut down
+            by this function. If omitted, a `ThreadPoolExecutor` is created and cleaned up.
+
+    Returns:
+        A `GridSearchResults` with:
+
+        - `table`: One row per parameter combination, with columns:
+          `grid_index`, `grid_name`, `param1_name`, `param1_value`, `param2_name`, `param2_value`,
+          `objective_metric`, and `objective_value`.
+        - `param_grids`: The input grids (as a tuple) in the same order.
+        - `objective_metric`: The resolved metric key used (stringified).
+        - `best`: The best-scoring run (max objective), including its `returns` and `metrics`, or
+          None if no finite objective values were produced.
     """
 
     grids = tuple(param_grids)
     if len(grids) == 0:
         raise ValueError("param_grids must be non-empty.")
 
-    def _validate_set(s: ParamGrid2D) -> None:
+    def _validate_set(s: Grid2D) -> None:
         if not isinstance(s.param1_name, str) or not s.param1_name:
-            raise ValueError("ParamGrid2D.param1_name must be a non-empty string.")
+            raise ValueError("Grid2D.param1_name must be a non-empty string.")
         if not isinstance(s.param2_name, str) or not s.param2_name:
-            raise ValueError("ParamGrid2D.param2_name must be a non-empty string.")
+            raise ValueError("Grid2D.param2_name must be a non-empty string.")
         if s.param1_name == s.param2_name:
-            raise ValueError("ParamGrid2D param names must be distinct.")
+            raise ValueError("Grid2D param names must be distinct.")
         if len(s.param1_values) == 0 or len(s.param2_values) == 0:
-            raise ValueError("ParamGrid2D values must be non-empty.")
+            raise ValueError("Grid2D values must be non-empty.")
 
     for s in grids:
         _validate_set(s)
@@ -180,24 +213,11 @@ def grid_search_and_simulate(
                 tasks.append((set_index, i1, i2, v1, v2, merged))
 
     def _run_one(
-        task: tuple[int, int, int, Any, Any, dict[str, Any]]
+        task: tuple[int, int, int, Any, Any, dict[str, Any]],
     ) -> tuple[int, int, int, Any, Any, float, str]:
         grid_index, i1, i2, v1, v2, params = task
         weights = generate_weights(params)
-        _, metrics = simulate(
-            weights=weights,
-            close_prices=close_prices,
-            order_prices=order_prices,
-            funding_rates=funding_rates,
-            benchmark_asset=benchmark_asset,
-            order_notional_min=order_notional_min,
-            fee_pct=fee_pct,
-            slippage_pct=slippage_pct,
-            init_cash=init_cash,
-            freq_rule=freq_rule,
-            trading_days_year=trading_days_year,
-            risk_free_rate=risk_free_rate,
-        )
+        metrics = simulate(weights=weights, market=market, config=config).metrics
         val = _objective_value(metrics, objective_metric)
         return grid_index, i1, i2, v1, v2, val, str(objective_metric)
 
@@ -215,7 +235,7 @@ def grid_search_and_simulate(
             ) from e
         pbar = tqdm(
             total=len(tasks),
-            desc=progress_desc or f"grid_search_and_simulate ({objective_metric})",
+            desc=progress_desc or f"grid_search ({objective_metric})",
             unit="run",
         )
 
@@ -262,7 +282,7 @@ def grid_search_and_simulate(
     df = df.sort_values(["grid_index", "_param1_pos", "_param2_pos"], kind="mergesort")
     df = df.drop(columns=["_param1_pos", "_param2_pos"])
 
-    best: ParamGridBest | None = None
+    best: GridSearchBest | None = None
     if len(df.index) > 0:
         obj = pd.to_numeric(df["objective_value"], errors="coerce").to_numpy(dtype=float)
         finite_mask = np.isfinite(obj)
@@ -277,32 +297,18 @@ def grid_search_and_simulate(
             best_params[best_grid.param2_name] = best_row["param2_value"]
 
             best_weights = generate_weights(best_params)
-            best_returns, best_metrics = simulate(
-                weights=best_weights,
-                close_prices=close_prices,
-                order_prices=order_prices,
-                funding_rates=funding_rates,
-                benchmark_asset=benchmark_asset,
-                order_notional_min=order_notional_min,
-                fee_pct=fee_pct,
-                slippage_pct=slippage_pct,
-                init_cash=init_cash,
-                freq_rule=freq_rule,
-                trading_days_year=trading_days_year,
-                risk_free_rate=risk_free_rate,
-            )
+            best_result = simulate(weights=best_weights, market=market, config=config)
 
-            best = ParamGridBest(
+            best = GridSearchBest(
                 grid_index=best_grid_index,
                 grid_name=str(best_row["grid_name"]),
                 params=best_params,
                 objective_metric=resolved_key,
                 objective_value=float(best_row["objective_value"]),
-                returns=best_returns,
-                metrics=best_metrics,
+                result=best_result,
             )
 
-    return ParamGridResults(
+    return GridSearchResults(
         table=df,
         param_grids=grids,
         objective_metric=resolved_key,

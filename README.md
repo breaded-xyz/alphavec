@@ -85,29 +85,28 @@ See `examples/simulate.ipynb`
 
 ```python
 import pandas as pd
-from alphavec import simulate, tearsheet
+from alphavec import MarketData, SimConfig, simulate, tearsheet
 
 weights = pd.DataFrame({"BTC": [1, 1, 1]}, index=pd.date_range("2024-01-01", periods=3, freq="1D"))
 close_prices = pd.DataFrame({"BTC": [100, 105, 110]}, index=weights.index)
 order_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
 
-returns, metrics = simulate(
+result = simulate(
     weights=weights,
-    close_prices=close_prices,
-    order_prices=order_prices,
-    funding_rates=None,
-    benchmark_asset="BTC",
-    order_notional_min=10,
-    fee_pct=0.00025,       # 2.5 bps per trade
-    slippage_pct=0.001,  # 10 bps per trade
-    init_cash=10_000,
-    freq_rule="1D",
-    trading_days_year=365,
-    risk_free_rate=0.03,
+    market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
+    config=SimConfig(
+        benchmark_asset="BTC",
+        order_notional_min=10,
+        fee_rate=0.00025,       # 2.5 bps per trade
+        slippage_rate=0.001,    # 10 bps per trade
+        init_cash=10_000,
+        freq_rule="1D",
+        trading_days_year=365,
+        risk_free_rate=0.03,
+    ),
 )
 html_str = tearsheet(
-    metrics=metrics,
-    returns=returns,
+    sim_result=result,
     output_path="tearsheet.html",
     signal_smooth_window=30,
     rolling_sharpe_window=30,
@@ -116,26 +115,27 @@ html_str = tearsheet(
 
 ### Parameter Search
 
-`grid_search_and_simulate()` wraps `simulate()` and runs a 2D grid search where the objective is a simulation metric (default: `Annualized Sharpe`).
+`grid_search()` wraps `simulate()` and runs a 2D grid search where the objective is a simulation metric (default: `Annualized Sharpe`).
 
 See `examples/search.ipynb`
 
 ```python
-from alphavec import ParamGrid2D, grid_search_and_simulate
+from alphavec import Grid2D, MarketData, SimConfig, grid_search
 
-results = grid_search_and_simulate(
+results = grid_search(
     generate_weights=generate_weights,  # def generate_weights(params: Mapping) -> pd.DataFrame
     base_params={"foo": 1},
     param_grids=[
-        ParamGrid2D("lookback", [5, 10, 20], "leverage", [0.5, 1.0, 2.0]),
+        Grid2D("lookback", [5, 10, 20], "leverage", [0.5, 1.0, 2.0]),
     ],
-    close_prices=close_prices,
-    order_prices=order_prices,
+    market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
+    config=SimConfig(),
 )
 
 results.table
 results.heatmap_figure(grid_index=0).show()
 results.best.metrics
+results.best.result
 ```
 
 ## Metrics
@@ -187,7 +187,7 @@ This ensures alphavec metrics are directly comparable to industry benchmarks and
 
 ## Tearsheet
 
-The built-in `tearsheet()` renderer produces a self-contained HTML report (Plotly charts + metrics table), including:
+The built-in `tearsheet()` renderer produces a self-contained HTML report (static charts + metrics table), including:
 
 - Equity curve (portfolio and optional benchmark)
 - Drawdown

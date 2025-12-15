@@ -4,17 +4,11 @@
 #
 #    pip-compile --output-file=requirements.prod.txt requirements.prod.in
 #
-narwhals==2.13.0
-    # via plotly
 numpy==2.3.5
     # via
     #   -r requirements.prod.in
     #   pandas
-packaging==25.0
-    # via plotly
 pandas==2.3.3
-    # via -r requirements.prod.in
-plotly==6.5.0
     # via -r requirements.prod.in
 python-dateutil==2.9.0.post0
     # via pandas
