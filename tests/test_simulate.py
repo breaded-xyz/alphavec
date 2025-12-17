@@ -10,13 +10,13 @@ def _sim(
     *,
     weights: pd.DataFrame | pd.Series,
     close_prices: pd.DataFrame | pd.Series,
-    order_prices: pd.DataFrame | pd.Series,
+    exec_prices: pd.DataFrame | pd.Series,
     funding_rates: pd.DataFrame | pd.Series | None,
     **config_overrides: object,
 ):
     market = MarketData(
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=funding_rates,
     )
     config = SimConfig(**config_overrides)
@@ -27,7 +27,7 @@ def _simulate_reference(
     *,
     weights: pd.DataFrame,
     close_prices: pd.DataFrame,
-    order_prices: pd.DataFrame,
+    exec_prices: pd.DataFrame,
     funding_rates: pd.DataFrame | None,
     order_notional_min: float,
     fee_pct: float,
@@ -46,7 +46,7 @@ def _simulate_reference(
 
     for ts in weights.index:
         w_row = weights.loc[ts]
-        op_row = order_prices.loc[ts]
+        op_row = exec_prices.loc[ts]
         cp_row = close_prices.loc[ts]
         fr_row = (
             funding_rates.loc[ts]
@@ -140,7 +140,7 @@ def test_simulate_oracle():
     # Case: Closed-form single-asset with fees (no slippage or funding).
     dates = pd.date_range("2024-01-01", periods=3, freq="1D")
     close_prices = pd.DataFrame({"BTC": [100.0, 110.0, 120.0]}, index=dates)
-    order_prices = close_prices.copy()
+    exec_prices = close_prices.copy()
     weights = pd.DataFrame({"BTC": [0.0, 1.0, 0.0]}, index=dates)
 
     init_cash = 1000.0
@@ -149,7 +149,7 @@ def test_simulate_oracle():
     result = _sim(
         weights=weights,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=None,
         init_cash=init_cash,
         fee_rate=fee_pct,
@@ -194,7 +194,7 @@ def test_simulate_reference():
         },
         index=dates,
     )
-    order_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
+    exec_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
     weights = pd.DataFrame(
         {
             "BTC": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
@@ -218,7 +218,7 @@ def test_simulate_reference():
     result = _sim(
         weights=weights,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=funding_rates,
         init_cash=init_cash,
         fee_rate=fee_pct,
@@ -234,7 +234,7 @@ def test_simulate_reference():
     ref_returns, ref_tearsheet = _simulate_reference(
         weights=weights,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=funding_rates,
         order_notional_min=0.0,
         fee_pct=fee_pct,
@@ -266,7 +266,7 @@ def test_simulate_series_inputs():
     result = _sim(
         weights=weights,
         close_prices=close,
-        order_prices=order,
+        exec_prices=order,
         funding_rates=None,
         init_cash=1000.0,
         fee_rate=0.0,
@@ -291,13 +291,13 @@ def test_simulate_order_notional_min_skips_small_rebalance():
     # Case: Small rebalance below min notional is skipped.
     dates = pd.date_range("2024-01-01", periods=3, freq="1D")
     close_prices = pd.DataFrame({"BTC": [100.0, 100.0, 100.0]}, index=dates)
-    order_prices = close_prices.copy()
+    exec_prices = close_prices.copy()
     weights = pd.DataFrame({"BTC": [1.0, 1.01, 1.01]}, index=dates)
 
     result = _sim(
         weights=weights,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=None,
         init_cash=1000.0,
         fee_rate=0.01,
@@ -322,13 +322,13 @@ def test_simulate_closing_ignores_order_notional_min():
     # Case: Closing trades execute even below min notional.
     dates = pd.date_range("2024-01-01", periods=3, freq="1D")
     close_prices = pd.DataFrame({"BTC": [100.0, 50.0, 50.0]}, index=dates)
-    order_prices = close_prices.copy()
+    exec_prices = close_prices.copy()
     weights = pd.DataFrame({"BTC": [1.0, 0.0, 0.0]}, index=dates)
 
     result = _sim(
         weights=weights,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=None,
         init_cash=1000.0,
         fee_rate=0.01,
@@ -353,7 +353,7 @@ def test_simulate_funding_sign_convention():
     # Case: Positive funding rate means longs pay, shorts earn.
     dates = pd.date_range("2024-01-01", periods=3, freq="1D")
     close_prices = pd.DataFrame({"BTC": [100.0, 100.0, 100.0]}, index=dates)
-    order_prices = close_prices.copy()
+    exec_prices = close_prices.copy()
     funding_rates = pd.DataFrame({"BTC": [0.01, 0.01, 0.01]}, index=dates)
 
     # Case: long pays.
@@ -361,7 +361,7 @@ def test_simulate_funding_sign_convention():
     metrics_long = _sim(
         weights=weights_long,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=funding_rates,
         init_cash=1000.0,
         fee_rate=0.0,
@@ -379,7 +379,7 @@ def test_simulate_funding_sign_convention():
     metrics_short = _sim(
         weights=weights_short,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=funding_rates,
         init_cash=1000.0,
         fee_rate=0.0,
@@ -398,12 +398,12 @@ def test_simulate_mismatched_inputs_raises():
     dates = pd.date_range("2024-01-01", periods=2, freq="1D")
     weights = pd.DataFrame({"BTC": [1.0, 1.0]}, index=dates)
     close_prices = pd.DataFrame({"ETH": [10.0, 10.0]}, index=dates)
-    order_prices = close_prices.copy()
+    exec_prices = close_prices.copy()
 
     with pytest.raises(ValueError):
         simulate(
             weights=weights,
-            market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
+            market=MarketData(close_prices=close_prices, exec_prices=exec_prices, funding_rates=None),
         )
 
 
@@ -411,13 +411,13 @@ def test_simulate_nan_order_skips_open_allows_close():
     # Case: NaN order price skips opening/rebalancing but still allows closing via carry-forward.
     dates = pd.date_range("2024-01-01", periods=3, freq="1D")
     close_prices = pd.DataFrame({"BTC": [100.0, 100.0, 100.0]}, index=dates)
-    order_prices = pd.DataFrame({"BTC": [100.0, np.nan, np.nan]}, index=dates)
+    exec_prices = pd.DataFrame({"BTC": [100.0, np.nan, np.nan]}, index=dates)
     weights = pd.DataFrame({"BTC": [1.0, 1.0, 0.0]}, index=dates)
 
     result = _sim(
         weights=weights,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=None,
         init_cash=1000.0,
         fee_rate=0.0,
@@ -441,14 +441,14 @@ def test_simulate_nan_close_carries_forward_and_zero_funding():
     # Case: NaN close carries forward last close for valuation and implies zero funding.
     dates = pd.date_range("2024-01-01", periods=3, freq="1D")
     close_prices = pd.DataFrame({"BTC": [100.0, np.nan, 100.0]}, index=dates)
-    order_prices = pd.DataFrame({"BTC": [100.0, 100.0, 100.0]}, index=dates)
+    exec_prices = pd.DataFrame({"BTC": [100.0, 100.0, 100.0]}, index=dates)
     funding_rates = pd.DataFrame({"BTC": [0.0, 0.01, 0.0]}, index=dates)
     weights = pd.DataFrame({"BTC": [1.0, 1.0, 1.0]}, index=dates)
 
     result = _sim(
         weights=weights,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=funding_rates,
         init_cash=1000.0,
         fee_rate=0.0,
@@ -471,13 +471,13 @@ def test_simulate_alpha_beta_benchmark():
     # Case: Portfolio identical to benchmark has beta~1 and alpha~0.
     dates = pd.date_range("2024-01-01", periods=5, freq="1D")
     close_prices = pd.DataFrame({"BTC": [100.0, 110.0, 105.0, 120.0, 115.0]}, index=dates)
-    order_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
+    exec_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
     weights = pd.DataFrame({"BTC": [1.0] * len(dates)}, index=dates)
 
     result = _sim(
         weights=weights,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=None,
         benchmark_asset="BTC",
         init_cash=1000.0,
@@ -502,13 +502,13 @@ def test_tearsheet_renders_html(tmp_path: Path):
     # Case: HTML is produced and can be written to disk.
     dates = pd.date_range("2024-01-01", periods=3, freq="1D")
     close_prices = pd.DataFrame({"BTC": [100.0, 110.0, 120.0]}, index=dates)
-    order_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
+    exec_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
     weights = pd.DataFrame({"BTC": [1.0, 1.0, 1.0]}, index=dates)
 
     result = _sim(
         weights=weights,
         close_prices=close_prices,
-        order_prices=order_prices,
+        exec_prices=exec_prices,
         funding_rates=None,
         benchmark_asset="BTC",
         init_cash=1000.0,

@@ -16,7 +16,7 @@ from .metrics import _metrics
 class _Inputs:
     weights: pd.DataFrame
     close_prices: pd.DataFrame
-    order_prices: pd.DataFrame
+    exec_prices: pd.DataFrame
     funding_rates: pd.DataFrame
 
 
@@ -83,7 +83,7 @@ class SimulationResult:
 @dataclass(frozen=True)
 class MarketData:
     close_prices: pd.DataFrame | pd.Series
-    order_prices: pd.DataFrame | pd.Series | None = None
+    exec_prices: pd.DataFrame | pd.Series
     funding_rates: pd.DataFrame | pd.Series | None = None
 
 
@@ -109,7 +109,7 @@ def _normalize_inputs(
     *,
     weights: pd.DataFrame | pd.Series,
     close_prices: pd.DataFrame | pd.Series,
-    order_prices: pd.DataFrame | pd.Series | None,
+    exec_prices: pd.DataFrame | pd.Series,
     funding_rates: pd.DataFrame | pd.Series | None,
 ) -> _Inputs:
     """
@@ -120,7 +120,7 @@ def _normalize_inputs(
     # Convert Series to DataFrame
     cp = _to_frame(close_prices, "close_prices")
     w = _to_frame(weights, "weights")
-    op = _to_frame(order_prices, "order_prices") if order_prices is not None else None
+    ep = _to_frame(exec_prices, "exec_prices")
     fr = _to_frame(funding_rates, "funding_rates") if funding_rates is not None else None
 
     # Validate reference (close_prices)
@@ -149,14 +149,11 @@ def _normalize_inputs(
     if not w.columns.equals(ref_columns):
         raise ValueError("weights columns must exactly match close_prices columns")
 
-    # Validate order_prices if provided
-    if op is not None:
-        if not op.index.equals(ref_index):
-            raise ValueError("order_prices index must exactly match close_prices index")
-        if not op.columns.equals(ref_columns):
-            raise ValueError("order_prices columns must exactly match close_prices columns")
-    else:
-        op = cp.copy()
+    # Validate exec_prices
+    if not ep.index.equals(ref_index):
+        raise ValueError("exec_prices index must exactly match close_prices index")
+    if not ep.columns.equals(ref_columns):
+        raise ValueError("exec_prices columns must exactly match close_prices columns")
 
     # Validate funding_rates if provided
     if fr is not None:
@@ -170,10 +167,10 @@ def _normalize_inputs(
     # Convert to float
     w = w.astype(float)
     cp = cp.astype(float)
-    op = op.astype(float)
+    ep = ep.astype(float)
     fr = fr.astype(float)
 
-    return _Inputs(weights=w, close_prices=cp, order_prices=op, funding_rates=fr)
+    return _Inputs(weights=w, close_prices=cp, exec_prices=ep, funding_rates=fr)
 
 
 def _run_simulation(
@@ -190,7 +187,7 @@ def _run_simulation(
 
     w = inputs.weights.to_numpy(dtype=float)
     cp = inputs.close_prices.to_numpy(dtype=float)
-    op = inputs.order_prices.to_numpy(dtype=float)
+    ep = inputs.exec_prices.to_numpy(dtype=float)
     fr = inputs.funding_rates.to_numpy(dtype=float)
 
     n_periods, n_assets = w.shape
@@ -213,41 +210,41 @@ def _run_simulation(
     fee_rate = float(fee_rate)
     min_notional = float(order_notional_min)
 
-    last_op = np.full(n_assets, np.nan, dtype=float)
+    last_ep = np.full(n_assets, np.nan, dtype=float)
     last_cp = np.full(n_assets, np.nan, dtype=float)
     positions_hist = np.empty((n_periods, n_assets), dtype=float)
 
     for i in range(n_periods):
         weights_raw = w[i]
         weights_i = np.nan_to_num(weights_raw, nan=0.0)
-        op_raw = op[i]
+        ep_raw = ep[i]
         cp_raw = cp[i]
         fr_raw = fr[i]
 
         # Carry forward last seen prices so we can (a) value positions and (b) close positions even
         # when an instrument is temporarily not tradable (price=NaN).
-        op_eff = np.where(np.isnan(op_raw), last_op, op_raw)
+        ep_eff = np.where(np.isnan(ep_raw), last_ep, ep_raw)
         cp_eff = np.where(np.isnan(cp_raw), last_cp, cp_raw)
-        last_op = np.where(np.isnan(op_raw), last_op, op_raw)
+        last_ep = np.where(np.isnan(ep_raw), last_ep, ep_raw)
         last_cp = np.where(np.isnan(cp_raw), last_cp, cp_raw)
 
-        op_eff_safe = np.nan_to_num(op_eff, nan=0.0)
+        ep_eff_safe = np.nan_to_num(ep_eff, nan=0.0)
         cp_eff_safe = np.nan_to_num(cp_eff, nan=0.0)
 
-        # Use order prices to value the portfolio *before* trading; then compute the notional
+        # Use exec prices to value the portfolio *before* trading; then compute the notional
         # adjustment required to reach the target weights.
-        equity_before = cash + float(np.dot(positions, op_eff_safe))
+        equity_before = cash + float(np.dot(positions, ep_eff_safe))
         target_notional = weights_i * equity_before
-        current_notional = positions * op_eff_safe
+        current_notional = positions * ep_eff_safe
         delta_notional = target_notional - current_notional
 
         # When weights are 0/NaN we interpret that as a "close" target. Closing orders are allowed
         # even if they're below the minimum notional threshold.
         closing_mask = np.isnan(weights_raw) | (weights_raw == 0.0)
 
-        # If we don't have a tradable order price, skip opening/rebalancing; closing is still
-        # allowed using the carried-forward order price.
-        untradable_open_mask = np.isnan(op_raw) | np.isnan(op_eff)
+        # If we don't have a tradable exec price, skip opening/rebalancing; closing is still
+        # allowed using the carried-forward exec price.
+        untradable_open_mask = np.isnan(ep_raw) | np.isnan(ep_eff)
         delta_notional = np.where(untradable_open_mask & ~closing_mask, 0.0, delta_notional)
 
         # Skip small non-closing orders to reduce churn / unrealistic fills.
@@ -256,7 +253,7 @@ def _run_simulation(
 
         buys = delta_notional > 0.0
         sells = delta_notional < 0.0
-        exec_prices = op_eff_safe * (1.0 + slip * buys - slip * sells)
+        exec_prices = ep_eff_safe * (1.0 + slip * buys - slip * sells)
 
         traded_units = np.zeros(n_assets, dtype=float)
         nonzero_mask = delta_notional != 0.0
@@ -335,9 +332,9 @@ def simulate(
 
     This implements a simple rebalancing/perp accounting model:
 
-    - Value the portfolio at the start of each period using the **order** price.
+    - Value the portfolio at the start of each period using the **exec** price.
     - Convert target weights into target notionals (`target_notional = weights * equity_before`).
-    - Trade the notional difference at the order price (with optional slippage), paying fees on
+    - Trade the notional difference at the exec price (with optional slippage), paying fees on
       absolute order notional.
     - Mark-to-market the resulting positions using the **close** price to produce end-of-period
       equity and returns.
@@ -346,8 +343,8 @@ def simulate(
     Missing data is handled to keep the simulation robust to temporary gaps:
 
     - `weights` NaNs are treated as 0 targets.
-    - If an asset's `order_prices` is NaN for a period, opening/rebalancing that asset is skipped
-      for that period; however, positions can still be closed using the last observed order price.
+    - If an asset's `exec_prices` is NaN for a period, opening/rebalancing that asset is skipped
+      for that period; however, positions can still be closed using the last observed exec price.
     - If an asset's `close_prices` is NaN for a period, PnL and funding are forced to 0 for that
       asset in that period (positions remain valued using the last observed close for equity
       continuity).
@@ -359,7 +356,7 @@ def simulate(
         weights: Target percentage portfolio weights. Positive=long, negative=short.
             Weights are in decimal units (1.0=100%). NaN weights are treated as 0.0 targets.
             Must have same index and columns as market.close_prices.
-        market: Market data inputs (close/order prices and optional funding).
+        market: Market data inputs (close/exec prices and optional funding).
             All DataFrames must have matching index and columns.
         config: Simulation configuration (costs, annualization, benchmark, init cash).
 
@@ -385,7 +382,7 @@ def simulate(
     inputs = _normalize_inputs(
         weights=weights,
         close_prices=market.close_prices,
-        order_prices=market.order_prices,
+        exec_prices=market.exec_prices,
         funding_rates=market.funding_rates,
     )
 

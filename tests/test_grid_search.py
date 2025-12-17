@@ -12,7 +12,7 @@ def test_search_and_simulate_matches_simulate_for_one_point():
 
     rets = pd.DataFrame(rng.normal(0.0005, 0.02, size=(len(dates), len(assets))), index=dates, columns=assets)
     close_prices = (100.0 * (1.0 + rets).cumprod()).astype(float)
-    order_prices = close_prices.copy()
+    exec_prices = close_prices.copy()
 
     def generate_weights(params: dict) -> pd.DataFrame:
         lookback = int(params["lookback"])
@@ -29,7 +29,7 @@ def test_search_and_simulate_matches_simulate_for_one_point():
         ],
         objective_metric="Annualized Sharpe",
         max_workers=2,
-        market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
+        market=MarketData(close_prices=close_prices, exec_prices=exec_prices, funding_rates=None),
         config=SimConfig(
             init_cash=1000.0,
             fee_rate=0.0,
@@ -52,7 +52,7 @@ def test_search_and_simulate_matches_simulate_for_one_point():
     weights = generate_weights({"lookback": 2, "power": 1.0})
     metrics = simulate(
         weights=weights,
-        market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
+        market=MarketData(close_prices=close_prices, exec_prices=exec_prices, funding_rates=None),
         config=SimConfig(
             init_cash=1000.0,
             fee_rate=0.0,

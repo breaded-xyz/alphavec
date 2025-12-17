@@ -60,9 +60,9 @@ Requires Python `>=3.10`
 ### Notes
 
 - Simulates cross‑margin (cash pooling) with unlimited leverage and borrowing (no liquidations or margin calls).
-- Orders execute at `order_prices` plus slippage and fees.
+- Orders execute at `exec_prices` plus slippage and fees.
 - Funding applies per period using signed `funding_rates`, +ve rate shorts earn, longs pay, and vice versa for a -ve rate.
-- NaNs in `order_prices` or `close_prices` imply the asset is not tradable that period.
+- NaNs in `exec_prices` or `close_prices` imply the asset is not tradable that period.
 - NaNs in `funding_rates` are treated as 0, and funding is always 0 when `close_prices` is NaN.
 - Positions will always be closed if target weight is zero, regardless of minimum notional filter.
 
@@ -74,7 +74,7 @@ Key inputs:
 - `weights`: pandas `DataFrame` with a `DatetimeIndex` and columns for each asset.
   Values are decimal percentage target weights (1.0 = 100% equity invested).
   Positive = long, negative = short. Weights may sum greater than 1 at a time period for leverage.
-- `close_prices`, `order_prices`, `funding_rates` (optional): same shape/index/columns as `weights`.
+- `close_prices`, `exec_prices`, `funding_rates` (optional): same shape/index/columns as `weights`.
 
 Returns:
 - `returns`: period returns as a pandas `Series`.
@@ -90,11 +90,11 @@ from alphavec import MarketData, SimConfig, simulate, tearsheet
 
 weights = pd.DataFrame({"BTC": [1, 1, 1]}, index=pd.date_range("2024-01-01", periods=3, freq="1D"))
 close_prices = pd.DataFrame({"BTC": [100, 105, 110]}, index=weights.index)
-order_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
+exec_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
 
 result = simulate(
     weights=weights,
-    market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
+    market=MarketData(close_prices=close_prices, exec_prices=exec_prices, funding_rates=None),
     config=SimConfig(
         benchmark_asset="BTC",
         order_notional_min=10,
@@ -128,7 +128,7 @@ results = grid_search(
     generate_weights=generate_weights,  # def generate_weights(params: Mapping) -> pd.DataFrame
     objective_metric=Metrics.SHARPE,  # Type-safe metric names
     param_grid={"lookback": [5, 10, 20, 40]},  # Dict syntax - no Grid2D needed!
-    market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
+    market=MarketData(close_prices=close_prices, exec_prices=exec_prices, funding_rates=None),
     config=SimConfig(),
 )
 
