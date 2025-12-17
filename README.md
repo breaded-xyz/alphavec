@@ -115,27 +115,49 @@ html_str = tearsheet(
 
 ### Parameter Search
 
-`grid_search()` wraps `simulate()` and runs a 2D grid search where the objective is a simulation metric (default: `Annualized Sharpe`).
+`grid_search()` wraps `simulate()` and runs grid search over 1D or 2D parameter spaces where the objective is a simulation metric.
 
 See `examples/search.ipynb`
 
 ```python
-from alphavec import Grid2D, MarketData, SimConfig, grid_search
+from alphavec import grid_search, Metrics, MarketData, SimConfig
 
+# Simple 1D search with dict syntax (most concise)
 results = grid_search(
     generate_weights=generate_weights,  # def generate_weights(params: Mapping) -> pd.DataFrame
-    base_params={"foo": 1},
-    param_grids=[
-        Grid2D("lookback", [5, 10, 20], "leverage", [0.5, 1.0, 2.0]),
-    ],
+    objective_metric=Metrics.SHARPE,  # Type-safe metric names
+    param_grid={"lookback": [5, 10, 20, 40]},  # Dict syntax - no Grid2D needed!
     market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),
     config=SimConfig(),
 )
 
-results.table
-results.heatmap_figure(grid_index=0).show()
-results.best.metrics
-results.best.result
+# 2D search with multiple grids
+results = grid_search(
+    generate_weights=generate_weights,
+    param_grids=[
+        {"lookback": [5, 10, 20], "leverage": [0.5, 1.0, 2.0]},  # 2D dict
+        {"lookback": [5, 10, 20], "smooth_span": [1, 5, 10]},   # Another 2D search
+    ],
+    market=market,
+    config=config,
+)
+
+# Minimize risk metrics
+results = grid_search(
+    generate_weights=generate_weights,
+    objective_metric=Metrics.MAX_DRAWDOWN,
+    maximize=False,  # Minimize drawdown instead of maximize
+    param_grid={"lookback": [10, 20, 40]},
+    market=market,
+)
+
+# Access results
+results.table          # Full results DataFrame
+results.best.params    # Best parameters
+results.best.metrics   # Best run's metrics
+results.top(5)         # Top 5 parameter combinations
+results.summary()      # Summary statistics by grid
+results.plot()         # Smart plot: line for 1D, heatmap for 2D
 ```
 
 ## Metrics

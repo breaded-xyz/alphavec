@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from alphavec import Grid2D, MarketData, SimConfig, grid_search, simulate
+from alphavec import MarketData, SimConfig, grid_search, simulate
 
 
 def test_search_and_simulate_matches_simulate_for_one_point():
@@ -22,19 +22,11 @@ def test_search_and_simulate_matches_simulate_for_one_point():
         denom = raw.abs().sum(axis=1).replace(0.0, np.nan)
         return raw.div(denom, axis=0).fillna(0.0)
 
-    sets = [
-        Grid2D(
-            param1_name="lookback",
-            param1_values=[2, 5],
-            param2_name="power",
-            param2_values=[0.5, 1.0],
-        )
-    ]
-
     results = grid_search(
         generate_weights=generate_weights,
-        base_params={},
-        param_grids=sets,
+        param_grids=[
+            {"lookback": [2, 5], "power": [0.5, 1.0]},
+        ],
         objective_metric="Annualized Sharpe",
         max_workers=2,
         market=MarketData(close_prices=close_prices, order_prices=order_prices, funding_rates=None),

@@ -6,9 +6,9 @@ from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 from .sim import MarketData, SimConfig, SimulationResult, simulate
 from .search import (
-    Grid2D,
     GridSearchBest,
     GridSearchResults,
+    Metrics,
     grid_search,
 )
 from .metrics import TEARSHEET_NOTES
@@ -27,8 +27,8 @@ __all__ = [
     "SimConfig",
     "TEARSHEET_NOTES",
     "grid_search",
-    "Grid2D",
     "GridSearchBest",
     "GridSearchResults",
+    "Metrics",
     "__version__",
 ]
