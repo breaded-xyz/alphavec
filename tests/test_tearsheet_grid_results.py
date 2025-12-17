@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from alphavec import Grid2D, MarketData, SimConfig, grid_search, tearsheet
+from alphavec import MarketData, SimConfig, grid_search, tearsheet
 
 
 def test_tearsheet_renders_grid_heatmaps():
@@ -30,12 +30,7 @@ def test_tearsheet_renders_grid_heatmaps():
         generate_weights=generate_weights,
         base_params={},
         param_grids=[
-            Grid2D(
-                param1_name="lookback",
-                param1_values=[5, 10],
-                param2_name="leverage",
-                param2_values=[0.5, 1.0],
-            )
+            {"lookback": [5, 10], "leverage": [0.5, 1.0]},
         ],
         objective_metric="Annualized Sharpe",
         max_workers=2,
