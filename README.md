@@ -1,6 +1,7 @@
 # Alphavec
 
 [![CI](https://github.com/breaded-xyz/alphavec/actions/workflows/ci.yml/badge.svg)](https://github.com/breaded-xyz/alphavec/actions/workflows/ci.yml)
+[![Upload Python Package](https://github.com/breaded-xyz/alphavec/actions/workflows/python-publish.yml/badge.svg)](https://github.com/breaded-xyz/alphavec/actions/workflows/python-publish.yml)
 
 >**Disclaimer**
 >
