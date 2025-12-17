@@ -258,10 +258,10 @@ def test_simulate_reference():
 
 def test_simulate_series_inputs():
     # Case: Series inputs are accepted and behave like single-column frames.
-    dates = pd.date_range("2024-01-01", periods=2, freq="1D")
-    close = pd.Series([100.0, 110.0], index=dates, name="BTC")
+    dates = pd.date_range("2024-01-01", periods=3, freq="1D")
+    close = pd.Series([100.0, 110.0, 120.0], index=dates, name="BTC")
     order = close.shift(1).fillna(close.iloc[0])
-    weights = pd.Series([1.0, 1.0], index=dates, name="BTC")
+    weights = pd.Series([1.0, 1.0, 1.0], index=dates, name="BTC")
 
     result = _sim(
         weights=weights,
@@ -289,10 +289,10 @@ def test_simulate_series_inputs():
 
 def test_simulate_order_notional_min_skips_small_rebalance():
     # Case: Small rebalance below min notional is skipped.
-    dates = pd.date_range("2024-01-01", periods=2, freq="1D")
-    close_prices = pd.DataFrame({"BTC": [100.0, 100.0]}, index=dates)
+    dates = pd.date_range("2024-01-01", periods=3, freq="1D")
+    close_prices = pd.DataFrame({"BTC": [100.0, 100.0, 100.0]}, index=dates)
     order_prices = close_prices.copy()
-    weights = pd.DataFrame({"BTC": [1.0, 1.01]}, index=dates)
+    weights = pd.DataFrame({"BTC": [1.0, 1.01, 1.01]}, index=dates)
 
     result = _sim(
         weights=weights,
@@ -310,7 +310,7 @@ def test_simulate_order_notional_min_skips_small_rebalance():
     returns = result.returns
     metrics = result.metrics
 
-    expected_equity = pd.Series([990.0, 990.0], index=dates)
+    expected_equity = pd.Series([990.0, 990.0, 990.0], index=dates)
     expected_returns = expected_equity.pct_change().fillna(0.0)
 
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
@@ -320,10 +320,10 @@ def test_simulate_order_notional_min_skips_small_rebalance():
 
 def test_simulate_closing_ignores_order_notional_min():
     # Case: Closing trades execute even below min notional.
-    dates = pd.date_range("2024-01-01", periods=2, freq="1D")
-    close_prices = pd.DataFrame({"BTC": [100.0, 50.0]}, index=dates)
+    dates = pd.date_range("2024-01-01", periods=3, freq="1D")
+    close_prices = pd.DataFrame({"BTC": [100.0, 50.0, 50.0]}, index=dates)
     order_prices = close_prices.copy()
-    weights = pd.DataFrame({"BTC": [1.0, 0.0]}, index=dates)
+    weights = pd.DataFrame({"BTC": [1.0, 0.0, 0.0]}, index=dates)
 
     result = _sim(
         weights=weights,
@@ -341,7 +341,7 @@ def test_simulate_closing_ignores_order_notional_min():
     returns = result.returns
     metrics = result.metrics
 
-    expected_equity = pd.Series([990.0, 485.0], index=dates)
+    expected_equity = pd.Series([990.0, 485.0, 485.0], index=dates)
     expected_returns = expected_equity.pct_change().fillna(0.0)
 
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
@@ -351,13 +351,13 @@ def test_simulate_closing_ignores_order_notional_min():
 
 def test_simulate_funding_sign_convention():
     # Case: Positive funding rate means longs pay, shorts earn.
-    dates = pd.date_range("2024-01-01", periods=1, freq="1D")
-    close_prices = pd.DataFrame({"BTC": [100.0]}, index=dates)
+    dates = pd.date_range("2024-01-01", periods=3, freq="1D")
+    close_prices = pd.DataFrame({"BTC": [100.0, 100.0, 100.0]}, index=dates)
     order_prices = close_prices.copy()
-    funding_rates = pd.DataFrame({"BTC": [0.01]}, index=dates)
+    funding_rates = pd.DataFrame({"BTC": [0.01, 0.01, 0.01]}, index=dates)
 
     # Case: long pays.
-    weights_long = pd.DataFrame({"BTC": [1.0]}, index=dates)
+    weights_long = pd.DataFrame({"BTC": [1.0, 1.0, 1.0]}, index=dates)
     metrics_long = _sim(
         weights=weights_long,
         close_prices=close_prices,
@@ -371,11 +371,11 @@ def test_simulate_funding_sign_convention():
         trading_days_year=365,
         risk_free_rate=0.0,
     ).metrics
-    assert float(metrics_long.loc["Funding earnings", "Value"]) == pytest.approx(-10.0)
-    assert float(metrics_long.loc["Total return %", "Value"]) == pytest.approx(-1.0)
+    assert float(metrics_long.loc["Funding earnings", "Value"]) == pytest.approx(-29.701)
+    assert float(metrics_long.loc["Total return %", "Value"]) == pytest.approx(-2.9701)
 
     # Case: short earns.
-    weights_short = pd.DataFrame({"BTC": [-1.0]}, index=dates)
+    weights_short = pd.DataFrame({"BTC": [-1.0, -1.0, -1.0]}, index=dates)
     metrics_short = _sim(
         weights=weights_short,
         close_prices=close_prices,
@@ -389,8 +389,8 @@ def test_simulate_funding_sign_convention():
         trading_days_year=365,
         risk_free_rate=0.0,
     ).metrics
-    assert float(metrics_short.loc["Funding earnings", "Value"]) == pytest.approx(10.0)
-    assert float(metrics_short.loc["Total return %", "Value"]) == pytest.approx(1.0)
+    assert float(metrics_short.loc["Funding earnings", "Value"]) == pytest.approx(30.301)
+    assert float(metrics_short.loc["Total return %", "Value"]) == pytest.approx(3.0301)
 
 
 def test_simulate_mismatched_inputs_raises():
@@ -439,11 +439,11 @@ def test_simulate_nan_order_skips_open_allows_close():
 
 def test_simulate_nan_close_carries_forward_and_zero_funding():
     # Case: NaN close carries forward last close for valuation and implies zero funding.
-    dates = pd.date_range("2024-01-01", periods=2, freq="1D")
-    close_prices = pd.DataFrame({"BTC": [100.0, np.nan]}, index=dates)
-    order_prices = pd.DataFrame({"BTC": [100.0, 100.0]}, index=dates)
-    funding_rates = pd.DataFrame({"BTC": [0.0, 0.01]}, index=dates)
-    weights = pd.DataFrame({"BTC": [1.0, 1.0]}, index=dates)
+    dates = pd.date_range("2024-01-01", periods=3, freq="1D")
+    close_prices = pd.DataFrame({"BTC": [100.0, np.nan, 100.0]}, index=dates)
+    order_prices = pd.DataFrame({"BTC": [100.0, 100.0, 100.0]}, index=dates)
+    funding_rates = pd.DataFrame({"BTC": [0.0, 0.01, 0.0]}, index=dates)
+    weights = pd.DataFrame({"BTC": [1.0, 1.0, 1.0]}, index=dates)
 
     result = _sim(
         weights=weights,
@@ -461,7 +461,7 @@ def test_simulate_nan_close_carries_forward_and_zero_funding():
     returns = result.returns
     metrics = result.metrics
 
-    expected_equity = pd.Series([1000.0, 1000.0], index=dates)
+    expected_equity = pd.Series([1000.0, 1000.0, 1000.0], index=dates)
     expected_returns = expected_equity.pct_change().fillna(0.0)
     assert np.allclose(returns.to_numpy(), expected_returns.to_numpy())
     assert float(metrics.loc["Funding earnings", "Value"]) == pytest.approx(0.0)

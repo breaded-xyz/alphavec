@@ -112,39 +112,66 @@ def _normalize_inputs(
     order_prices: pd.DataFrame | pd.Series | None,
     funding_rates: pd.DataFrame | pd.Series | None,
 ) -> _Inputs:
-    w = _to_frame(weights, "weights").astype(float)
-    cp = _to_frame(close_prices, "close_prices").astype(float)
-    op = _to_frame(order_prices, "order_prices").astype(float) if order_prices is not None else None
-    fr = (
-        _to_frame(funding_rates, "funding_rates").astype(float)
-        if funding_rates is not None
-        else None
-    )
+    """
+    Validate and normalize inputs using close_prices as the reference.
 
-    index = w.index
-    columns = w.columns
+    All inputs must be perfectly aligned - no automatic alignment is performed.
+    """
+    # Convert Series to DataFrame
+    cp = _to_frame(close_prices, "close_prices")
+    w = _to_frame(weights, "weights")
+    op = _to_frame(order_prices, "order_prices") if order_prices is not None else None
+    fr = _to_frame(funding_rates, "funding_rates") if funding_rates is not None else None
 
-    def _align(df: pd.DataFrame, label: str) -> pd.DataFrame:
-        missing_cols = columns.difference(df.columns)
-        if len(missing_cols) > 0:
-            raise ValueError(f"{label} is missing columns: {list(missing_cols)}")
-        missing_index = index.difference(df.index)
-        if len(missing_index) > 0:
-            raise ValueError(f"{label} is missing index values for weights.")
-        return df.reindex(index=index, columns=columns)
+    # Validate reference (close_prices)
+    if not pd.api.types.is_float_dtype(cp.values.dtype):
+        raise ValueError("close_prices must be of type float")
 
-    cp = _align(cp, "close_prices")
-    if op is None:
+    if cp.shape[1] < 1:
+        raise ValueError("close_prices must have at least 1 column")
+
+    if len(cp.index) < 3:
+        raise ValueError("close_prices must have at least 3 rows")
+
+    if not isinstance(cp.index, pd.DatetimeIndex):
+        raise ValueError("close_prices must have a DatetimeIndex")
+
+    if not cp.index.is_monotonic_increasing:
+        raise ValueError("close_prices index must be monotonically increasing")
+
+    # Get reference index and columns
+    ref_index = cp.index
+    ref_columns = cp.columns
+
+    # Validate weights match reference exactly
+    if not w.index.equals(ref_index):
+        raise ValueError("weights index must exactly match close_prices index")
+    if not w.columns.equals(ref_columns):
+        raise ValueError("weights columns must exactly match close_prices columns")
+
+    # Validate order_prices if provided
+    if op is not None:
+        if not op.index.equals(ref_index):
+            raise ValueError("order_prices index must exactly match close_prices index")
+        if not op.columns.equals(ref_columns):
+            raise ValueError("order_prices columns must exactly match close_prices columns")
+    else:
         op = cp.copy()
-    else:
-        op = _align(op, "order_prices")
-    if fr is None:
-        fr = pd.DataFrame(0.0, index=index, columns=columns)
-    else:
-        fr = _align(fr, "funding_rates")
 
-    if not isinstance(w.index, pd.DatetimeIndex):
-        raise ValueError("weights must use a DatetimeIndex.")
+    # Validate funding_rates if provided
+    if fr is not None:
+        if not fr.index.equals(ref_index):
+            raise ValueError("funding_rates index must exactly match close_prices index")
+        if not fr.columns.equals(ref_columns):
+            raise ValueError("funding_rates columns must exactly match close_prices columns")
+    else:
+        fr = pd.DataFrame(0.0, index=ref_index, columns=ref_columns)
+
+    # Convert to float
+    w = w.astype(float)
+    cp = cp.astype(float)
+    op = op.astype(float)
+    fr = fr.astype(float)
 
     return _Inputs(weights=w, close_prices=cp, order_prices=op, funding_rates=fr)
 
@@ -331,14 +358,15 @@ def simulate(
     Args:
         weights: Target percentage portfolio weights. Positive=long, negative=short.
             Weights are in decimal units (1.0=100%). NaN weights are treated as 0.0 targets.
+            Must have same index and columns as market.close_prices.
         market: Market data inputs (close/order prices and optional funding).
+            All DataFrames must have matching index and columns.
         config: Simulation configuration (costs, annualization, benchmark, init cash).
 
     Returns:
-        A tuple `(returns, metrics)`:
+        A SimulationResult with returns and metrics:
 
-        - `returns`: Period returns as a pandas Series aligned to `weights.index`. The first period
-          return is 0.0 (because there is no prior equity for `pct_change()`).
+        - `returns`: Period returns as a pandas Series aligned to the input index.
         - `metrics`: Summary statistics as a pandas DataFrame with `Value` and `Note` columns.
           Extra artifacts are attached via `metrics.attrs`, including:
 
@@ -349,8 +377,7 @@ def simulate(
             `benchmark_asset` is provided and present in `close_prices`).
 
     Raises:
-        ValueError: If `weights` does not use a DatetimeIndex or if the price/funding inputs do not
-            contain the full `weights` index/column set.
+        ValueError: If inputs are not properly aligned or do not meet validation requirements.
     """
 
     cfg = config or SimConfig()
