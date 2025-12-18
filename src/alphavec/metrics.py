@@ -809,4 +809,38 @@ def _metrics(
         close_prices=close_prices,
         max_lag=10,
     )
+
+    # Trading Activity & Costs time series
+    df.attrs["turnover"] = pd.Series(turnover_ratio, index=weights.index, name="turnover")
+    df.attrs["transaction_costs"] = pd.Series(
+        (fees_paid + slippage_paid) / equity.values, index=weights.index, name="transaction_costs"
+    )
+    # Count non-zero, non-nan weights per period (the strategy's active universe at each time)
+    weights_active = weights.fillna(0.0)
+    n_positions_per_period = (weights_active.abs() > 1e-8).sum(axis=1).values
+    df.attrs["n_positions"] = pd.Series(n_positions_per_period, index=weights.index, name="n_positions")
+
+    # Exposure & Risk Management time series
+    df.attrs["net_exposure"] = pd.Series(net_exposure_ratio, index=weights.index, name="net_exposure")
+    df.attrs["gross_exposure"] = pd.Series(gross_exposure_ratio, index=weights.index, name="gross_exposure")
+
+    # Compute long and short exposure from positions_hist (actual positions held, not weights)
+    # positions_hist is in dollar terms, so divide by equity to get % of portfolio
+    long_positions = np.clip(positions_hist, 0, None)
+    short_positions = np.clip(positions_hist, None, 0)
+    long_exp = long_positions.sum(axis=1) / equity.values
+    short_exp = short_positions.sum(axis=1) / equity.values
+    df.attrs["long_exposure"] = pd.Series(long_exp, index=weights.index, name="long_exposure")
+    df.attrs["short_exposure"] = pd.Series(short_exp, index=weights.index, name="short_exposure")
+
+    # Concentration (Herfindahl index): sum of squared position weights as fraction of portfolio
+    # Use absolute positions to measure concentration regardless of direction
+    abs_positions = np.abs(positions_hist)
+    total_abs_positions = abs_positions.sum(axis=1, keepdims=True)
+    # Avoid division by zero
+    total_abs_positions = np.where(total_abs_positions == 0, 1.0, total_abs_positions)
+    position_fractions = abs_positions / total_abs_positions
+    concentration = (position_fractions**2).sum(axis=1)
+    df.attrs["concentration"] = pd.Series(concentration, index=weights.index, name="concentration")
+
     return df

@@ -69,8 +69,7 @@ def tearsheet(
     sim_result: "SimulationResult | None" = None,
     grid_results: "GridSearchResults | None" = None,
     output_path: str | Path | None = None,
-    signal_smooth_window: int = 30,
-    rolling_sharpe_window: int = 30,
+    smooth_periods: int = 0,
 ) -> str:
     """
     Render a self-contained HTML tearsheet (no JS) from metrics and returns.
@@ -85,8 +84,8 @@ def tearsheet(
         grid_results: Optional results from `grid_search()` to render heatmaps (and
             optionally supply `best` as the simulation source).
         output_path: Optional path to write the HTML.
-        signal_smooth_window: Rolling window (in periods) used to smooth Signal time-series plots.
-        rolling_sharpe_window: Rolling window (in periods) used to compute Rolling Sharpe.
+        smooth_periods: Rolling window (in periods) to smooth all time-series charts.
+            Default is 0 (no smoothing).
 
     Returns:
         The rendered HTML document as a string. If `output_path` is provided, the same HTML is also
@@ -154,10 +153,16 @@ def tearsheet(
 
     dd_pct = (equity / equity.cummax() - 1.0) * 100.0
 
-    try:
-        rolling_window = max(2, int(rolling_sharpe_window))
-    except Exception:
-        rolling_window = 30
+    # Helper function for smoothing time series
+    def _smooth(s: pd.Series, window: int) -> pd.Series:
+        if window <= 1:
+            return s
+        min_periods = max(3, window // 5)
+        return s.rolling(window=window, min_periods=min_periods).mean()
+
+    # Use smooth_periods, with a minimum of 2 for rolling sharpe to be meaningful
+    smooth_window = max(0, int(smooth_periods))
+    rolling_sharpe_window = max(2, smooth_window) if smooth_window > 0 else 30
 
     freq_rule = str(_metric_value("Period frequency", "1D"))
     trading_days_year = int(_metric_value("Trading Days Year", 365))
@@ -167,9 +172,9 @@ def tearsheet(
     rf_per_period = (1.0 + risk_free_rate) ** (1.0 / annual_factor) - 1.0
 
     excess = returns.fillna(0.0) - rf_per_period
-    min_periods = max(3, rolling_window // 5)
-    roll_mean = excess.rolling(window=rolling_window, min_periods=min_periods).mean()
-    roll_std = excess.rolling(window=rolling_window, min_periods=min_periods).std(ddof=1)
+    min_periods = min(max(2, rolling_sharpe_window // 5), rolling_sharpe_window)
+    roll_mean = excess.rolling(window=rolling_sharpe_window, min_periods=min_periods).mean()
+    roll_std = excess.rolling(window=rolling_sharpe_window, min_periods=min_periods).std(ddof=1)
     rolling_sharpe = (roll_mean / roll_std) * np.sqrt(annual_factor)
 
     # Metrics table
@@ -202,8 +207,8 @@ def tearsheet(
 
     # Drawdown
     fig, ax = plt.subplots(figsize=(10, 3.5))
-    ax.plot(dd_pct.index, dd_pct.values, color="#1f77b4")
-    ax.fill_between(dd_pct.index, dd_pct.values, 0.0, alpha=0.25, color="#1f77b4")
+    ax.plot(dd_pct.index, dd_pct.values, color="#d62728")
+    ax.fill_between(dd_pct.index, dd_pct.values, 0.0, alpha=0.25, color="#d62728")
     ax.set_title("Drawdown (%)")
     ax.set_xlabel("Date")
     ax.set_ylabel("Drawdown (%)")
@@ -222,25 +227,31 @@ def tearsheet(
     fig, ax = plt.subplots(figsize=(10, 3.5))
     ax.plot(rolling_sharpe.index, rolling_sharpe.values, color="#1f77b4")
     ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-    ax.set_title(f"Rolling Sharpe ({rolling_window} periods)")
+    ax.set_title(f"Rolling Sharpe ({rolling_sharpe_window} periods)")
     ax.set_xlabel("Date")
     ax.set_ylabel("Sharpe")
     plots_html.append(
         _plot_block(
-            title=f"Rolling Sharpe ({rolling_window} periods)",
+            title=f"Rolling Sharpe ({rolling_sharpe_window} periods)",
             fig=fig,
             note=(
-                f"Rolling {rolling_window}-period Sharpe ratio (annualized), computed from per-period excess returns.",
+                f"Rolling {rolling_sharpe_window}-period Sharpe ratio (annualized), computed from per-period excess returns.",
                 "Higher and stable is better; sustained negative values indicate persistent underperformance vs the risk-free rate.",
             ),
         )
     )
 
-    # Return distribution
+    # Return distribution with skew/kurtosis
     returns_pct = returns.fillna(0.0) * 100.0
+    returns_clean = returns_pct[np.isfinite(returns_pct)]
+
+    from scipy import stats
+    skew_val = stats.skew(returns_clean) if len(returns_clean) > 2 else np.nan
+    kurt_val = stats.kurtosis(returns_clean) if len(returns_clean) > 3 else np.nan
+
     fig, ax = plt.subplots(figsize=(10, 3.5))
-    ax.hist(returns_pct.values, bins=60, color="#1f77b4", alpha=0.8)
-    ax.set_title("Returns Distribution (%)")
+    ax.hist(returns_clean.values, bins=60, color="#1f77b4", alpha=0.8)
+    ax.set_title(f"Returns Distribution (%) | Skew: {skew_val:.2f}, Kurtosis: {kurt_val:.2f}")
     ax.set_xlabel("Return (%)")
     ax.set_ylabel("Count")
     plots_html.append(
@@ -248,24 +259,193 @@ def tearsheet(
             title="Returns Distribution (%)",
             fig=fig,
             note=(
-                "Histogram of period returns (%).",
-                "Skew and fat tails matter: a positive mean with a negative median suggests outlier-driven performance.",
+                "Histogram of period returns (%) with skewness and excess kurtosis. Skew > 0 indicates a right tail; kurtosis > 0 indicates fat tails.",
+                "Positive skew with high kurtosis suggests occasional large wins; negative skew indicates crash risk.",
             ),
         )
     )
 
+    # Q-Q plot
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+    stats.probplot(returns_clean, dist="norm", plot=ax)
+    ax.set_title("Returns Q-Q Plot (vs Normal Distribution)")
+    ax.grid(True, alpha=0.3)
+    plots_html.append(
+        _plot_block(
+            title="Returns Q-Q Plot",
+            fig=fig,
+            note=(
+                "Quantile-quantile plot comparing return distribution to a normal distribution.",
+                "Points on the red line indicate normality; deviations in tails show fat tails or skew, which affect risk management.",
+            ),
+        )
+    )
+
+    # Trading Activity & Costs section
+    trading_blocks: list[str] = []
+
+    # Turnover
+    turnover_series = metrics.attrs.get("turnover")
+    if isinstance(turnover_series, pd.Series) and len(turnover_series) > 0:
+        turnover_pct = turnover_series * 100.0
+        turnover_plot = _smooth(turnover_pct, smooth_window)
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        ax.plot(turnover_plot.index, turnover_plot.values, color="#2ca02c", linewidth=2)
+        title = f"Portfolio Turnover (%) - {smooth_window}p smooth" if smooth_window > 0 else "Portfolio Turnover (%)"
+        ax.set_title(title)
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Turnover (%)")
+        trading_blocks.append(
+            _plot_block(
+                title="Portfolio Turnover (%)",
+                fig=fig,
+                note=(
+                    "Period-over-period portfolio turnover as a percentage of portfolio value.",
+                    "Higher turnover increases transaction costs; sustained high turnover may erode alpha and suggests signal instability.",
+                ),
+            )
+        )
+
+    # Transaction costs
+    transaction_costs = metrics.attrs.get("transaction_costs")
+    if isinstance(transaction_costs, pd.Series) and len(transaction_costs) > 0:
+        costs_pct = transaction_costs * 100.0
+        costs_plot = _smooth(costs_pct, smooth_window)
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        ax.plot(costs_plot.index, costs_plot.values, color="#d62728", linewidth=2)
+        title = f"Transaction Costs (%) - {smooth_window}p smooth" if smooth_window > 0 else "Transaction Costs (%)"
+        ax.set_title(title)
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Transaction cost (% of portfolio)")
+        trading_blocks.append(
+            _plot_block(
+                title="Transaction Costs (%)",
+                fig=fig,
+                note=(
+                    "Transaction costs per period as a percentage of portfolio value.",
+                    "Cumulative transaction costs directly reduce net returns; compare to gross returns to assess impact on alpha.",
+                ),
+            )
+        )
+
+    # Number of positions
+    n_positions = metrics.attrs.get("n_positions")
+    if isinstance(n_positions, pd.Series) and len(n_positions) > 0:
+        n_positions_plot = _smooth(n_positions, smooth_window)
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        ax.plot(n_positions_plot.index, n_positions_plot.values, color="#9467bd", linewidth=2)
+        title = f"Number of Active Positions - {smooth_window}p smooth" if smooth_window > 0 else "Number of Active Positions"
+        ax.set_title(title)
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Position count")
+        trading_blocks.append(
+            _plot_block(
+                title="Number of Active Positions",
+                fig=fig,
+                note=(
+                    "Number of positions with non-zero weight over time.",
+                    "Declining position counts may indicate increasing concentration or signal degradation; stable counts suggest consistent strategy execution.",
+                ),
+            )
+        )
+
+    trading_section_html = ""
+    if len(trading_blocks) > 0:
+        trading_section_html = "<h2>Trading Activity &amp; Costs</h2>" + "".join(trading_blocks)
+
+    # Exposure & Risk Management section
+    exposure_blocks: list[str] = []
+
+    # Net and Gross Exposure
+    net_exposure = metrics.attrs.get("net_exposure")
+    gross_exposure = metrics.attrs.get("gross_exposure")
+    if (isinstance(net_exposure, pd.Series) and len(net_exposure) > 0) or (
+        isinstance(gross_exposure, pd.Series) and len(gross_exposure) > 0
+    ):
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        if isinstance(gross_exposure, pd.Series) and len(gross_exposure) > 0:
+            gross_pct = gross_exposure * 100.0
+            gross_plot = _smooth(gross_pct, smooth_window)
+            ax.plot(gross_plot.index, gross_plot.values, label="Gross Exposure", linewidth=2, color="#1f77b4")
+        if isinstance(net_exposure, pd.Series) and len(net_exposure) > 0:
+            net_pct = net_exposure * 100.0
+            net_plot = _smooth(net_pct, smooth_window)
+            ax.plot(net_plot.index, net_plot.values, label="Net Exposure", linewidth=2, color="#ff7f0e")
+        ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+        title = f"Net and Gross Exposure (%) - {smooth_window}p smooth" if smooth_window > 0 else "Net and Gross Exposure (%)"
+        ax.set_title(title)
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Exposure (% of portfolio)")
+        ax.legend(loc="best")
+        exposure_blocks.append(
+            _plot_block(
+                title="Net and Gross Exposure (%)",
+                fig=fig,
+                note=(
+                    "Net exposure (long − short) and gross exposure (|long| + |short|) as % of portfolio value.",
+                    "Net shows directional bias; gross shows leverage. Stable exposure suggests consistent positioning; shifts may indicate regime changes.",
+                ),
+            )
+        )
+
+    # Long and Short Exposure separately
+    long_exposure = metrics.attrs.get("long_exposure")
+    short_exposure = metrics.attrs.get("short_exposure")
+    if (isinstance(long_exposure, pd.Series) and len(long_exposure) > 0) or (
+        isinstance(short_exposure, pd.Series) and len(short_exposure) > 0
+    ):
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        if isinstance(long_exposure, pd.Series) and len(long_exposure) > 0:
+            long_pct = long_exposure * 100.0
+            long_plot = _smooth(long_pct, smooth_window)
+            ax.fill_between(long_plot.index, 0, long_plot.values, label="Long Exposure", alpha=0.6, color="#2ca02c")
+        if isinstance(short_exposure, pd.Series) and len(short_exposure) > 0:
+            short_pct = short_exposure * 100.0
+            short_plot = _smooth(short_pct, smooth_window)
+            ax.fill_between(short_plot.index, 0, short_plot.values, label="Short Exposure", alpha=0.6, color="#d62728")
+        ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+        title = f"Long and Short Exposure (%) - {smooth_window}p smooth" if smooth_window > 0 else "Long and Short Exposure (%)"
+        ax.set_title(title)
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Exposure (% of portfolio)")
+        ax.legend(loc="best")
+        exposure_blocks.append(
+            _plot_block(
+                title="Long and Short Exposure (%)",
+                fig=fig,
+                note=(
+                    "Long and short exposure separately as % of portfolio value (long positive, short negative).",
+                    "Imbalances indicate directional bias; changes in magnitude show leverage adjustments or risk management actions.",
+                ),
+            )
+        )
+
+    # Concentration (Herfindahl index if available)
+    concentration = metrics.attrs.get("concentration")
+    if isinstance(concentration, pd.Series) and len(concentration) > 0:
+        concentration_plot = _smooth(concentration, smooth_window)
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        ax.plot(concentration_plot.index, concentration_plot.values, color="#8c564b", linewidth=2)
+        title = f"Position Concentration (Herfindahl Index) - {smooth_window}p smooth" if smooth_window > 0 else "Position Concentration (Herfindahl Index)"
+        ax.set_title(title)
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Concentration")
+        exposure_blocks.append(
+            _plot_block(
+                title="Position Concentration",
+                fig=fig,
+                note=(
+                    "Herfindahl index of position weights (sum of squared weights); ranges from 1/N (equal-weighted) to 1 (single position).",
+                    "Higher values indicate concentrated portfolios with idiosyncratic risk; lower values suggest better diversification.",
+                ),
+            )
+        )
+
+    exposure_section_html = ""
+    if len(exposure_blocks) > 0:
+        exposure_section_html = "<h2>Exposure &amp; Risk Management</h2>" + "".join(exposure_blocks)
+
     # Signal diagnostics
-    def _roll_mean(s: pd.Series, window: int) -> pd.Series:
-        if window <= 1:
-            return s
-        min_periods = max(3, window // 5)
-        return s.rolling(window=window, min_periods=min_periods).mean()
-
-    try:
-        smooth_window = max(1, int(signal_smooth_window))
-    except Exception:
-        smooth_window = 30
-
     signal_blocks: list[str] = []
 
     wf = metrics.attrs.get("weight_forward")
@@ -275,35 +455,32 @@ def tearsheet(
             fig, ax = plt.subplots(figsize=(10, 3.5))
             if "ic" in wf.columns:
                 ic = pd.to_numeric(wf["ic"], errors="coerce")
-                if smooth_window > 1:
+                if smooth_window > 0:
                     ax.plot(ic.index, ic.values, label="IC (raw)", linewidth=1, alpha=0.25)
-                ax.plot(
-                    ic.index,
-                    _roll_mean(ic, smooth_window).values,
-                    label=f"IC ({smooth_window}p mean)",
-                    linewidth=2,
-                )
+                    ic_plot = _smooth(ic, smooth_window)
+                    ax.plot(ic_plot.index, ic_plot.values, label=f"IC ({smooth_window}p smooth)", linewidth=2)
+                else:
+                    ax.plot(ic.index, ic.values, label="IC", linewidth=2)
             if "rank_ic" in wf.columns:
                 ric = pd.to_numeric(wf["rank_ic"], errors="coerce")
-                if smooth_window > 1:
+                if smooth_window > 0:
                     ax.plot(ric.index, ric.values, label="Rank IC (raw)", linewidth=1, alpha=0.25)
-                ax.plot(
-                    ric.index,
-                    _roll_mean(ric, smooth_window).values,
-                    label=f"Rank IC ({smooth_window}p mean)",
-                    linewidth=2,
-                )
+                    ric_plot = _smooth(ric, smooth_window)
+                    ax.plot(ric_plot.index, ric_plot.values, label=f"Rank IC ({smooth_window}p smooth)", linewidth=2)
+                else:
+                    ax.plot(ric.index, ric.values, label="Rank IC", linewidth=2)
             ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-            ax.set_title("Signal: IC (Smoothed)")
+            title = f"Signal: IC - {smooth_window}p smooth" if smooth_window > 0 else "Signal: IC"
+            ax.set_title(title)
             ax.set_xlabel("Date")
             ax.set_ylabel("Correlation")
             ax.legend(loc="best")
             signal_blocks.append(
                 _plot_block(
-                    title="Signal: IC (Smoothed)",
+                    title="Signal: IC",
                     fig=fig,
                     note=(
-                        "Per-period cross-sectional correlation between weights at t and next-period returns (IC), with a rolling mean overlay.",
+                        "Per-period cross-sectional correlation between weights at t and next-period returns (IC).",
                         "Sustained positive values suggest predictive alignment; noisy or near-zero values suggest a weak or unstable signal.",
                     ),
                 )
@@ -313,16 +490,15 @@ def tearsheet(
         if "top_bottom_spread" in wf.columns:
             spread = pd.to_numeric(wf["top_bottom_spread"], errors="coerce") * 100.0
             fig, ax = plt.subplots(figsize=(10, 3.5))
-            if smooth_window > 1:
+            if smooth_window > 0:
                 ax.plot(spread.index, spread.values, label="Spread (raw)", linewidth=1, alpha=0.25)
-            ax.plot(
-                spread.index,
-                _roll_mean(spread, smooth_window).values,
-                label=f"Spread ({smooth_window}p mean)",
-                linewidth=2,
-            )
+                spread_plot = _smooth(spread, smooth_window)
+                ax.plot(spread_plot.index, spread_plot.values, label=f"Spread ({smooth_window}p smooth)", linewidth=2)
+            else:
+                ax.plot(spread.index, spread.values, label="Spread", linewidth=2)
             ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-            ax.set_title("Signal: Top-Bottom Decile Spread (%)")
+            title = f"Signal: Top-Bottom Decile Spread (%) - {smooth_window}p smooth" if smooth_window > 0 else "Signal: Top-Bottom Decile Spread (%)"
+            ax.set_title(title)
             ax.set_xlabel("Date")
             ax.set_ylabel("Spread (%)")
             ax.legend(loc="best")
@@ -344,22 +520,23 @@ def tearsheet(
             fig, ax = plt.subplots(figsize=(10, 3.5))
             if sel_col in wf.columns:
                 sel = pd.to_numeric(wf[sel_col], errors="coerce") * 100.0
-                ax.plot(
-                    sel.index,
-                    _roll_mean(sel, smooth_window).values,
-                    label=f"Selection ({smooth_window}p mean)",
-                    linewidth=2,
-                )
+                if smooth_window > 0:
+                    ax.plot(sel.index, sel.values, label="Selection (raw)", linewidth=1, alpha=0.25)
+                    sel_plot = _smooth(sel, smooth_window)
+                    ax.plot(sel_plot.index, sel_plot.values, label=f"Selection ({smooth_window}p smooth)", linewidth=2)
+                else:
+                    ax.plot(sel.index, sel.values, label="Selection", linewidth=2)
             if dir_col in wf.columns:
                 dirn = pd.to_numeric(wf[dir_col], errors="coerce") * 100.0
-                ax.plot(
-                    dirn.index,
-                    _roll_mean(dirn, smooth_window).values,
-                    label=f"Directional ({smooth_window}p mean)",
-                    linewidth=2,
-                )
+                if smooth_window > 0:
+                    ax.plot(dirn.index, dirn.values, label="Directional (raw)", linewidth=1, alpha=0.25)
+                    dirn_plot = _smooth(dirn, smooth_window)
+                    ax.plot(dirn_plot.index, dirn_plot.values, label=f"Directional ({smooth_window}p smooth)", linewidth=2)
+                else:
+                    ax.plot(dirn.index, dirn.values, label="Directional", linewidth=2)
             ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-            ax.set_title("Signal: Attribution (Per Gross, %)")
+            title = f"Signal: Attribution (Per Gross, %) - {smooth_window}p smooth" if smooth_window > 0 else "Signal: Attribution (Per Gross, %)"
+            ax.set_title(title)
             ax.set_xlabel("Date")
             ax.set_ylabel("Contribution (%)")
             ax.legend(loc="best")
@@ -417,9 +594,6 @@ def tearsheet(
     wf_deciles_contrib_long = metrics.attrs.get("weight_forward_deciles_contrib_long")
     wf_deciles_contrib_short = metrics.attrs.get("weight_forward_deciles_contrib_short")
     if isinstance(wf_deciles, pd.Series) and len(wf_deciles.index) > 0:
-        counts = None
-        if isinstance(wf_deciles_count, pd.Series) and len(wf_deciles_count.index) > 0:
-            counts = wf_deciles_count.reindex(wf_deciles.index)
         x = wf_deciles.index.astype(int).to_numpy()
         y = (wf_deciles * 100.0).to_numpy(dtype=float)
         fig, ax = plt.subplots(figsize=(10, 3.5))
@@ -427,8 +601,6 @@ def tearsheet(
         ax.set_title("Signal: Mean Next Return by Weight Decile")
         ax.set_xlabel("Weight decile (active universe)")
         ax.set_ylabel("Mean next return (%)")
-        if counts is not None:
-            ax.set_xticks(x, [f"{d}\n(n={int(n)})" for d, n in zip(x, counts.fillna(0).astype(int))])
         signal_blocks.append(
             _plot_block(
                 title="Signal: Mean Next Return by Weight Decile",
@@ -441,9 +613,6 @@ def tearsheet(
         )
 
     if isinstance(wf_deciles_median, pd.Series) and len(wf_deciles_median.index) > 0:
-        counts = None
-        if isinstance(wf_deciles_count, pd.Series) and len(wf_deciles_count.index) > 0:
-            counts = wf_deciles_count.reindex(wf_deciles_median.index)
         x = wf_deciles_median.index.astype(int).to_numpy()
         y = (wf_deciles_median * 100.0).to_numpy(dtype=float)
         fig, ax = plt.subplots(figsize=(10, 3.5))
@@ -451,8 +620,6 @@ def tearsheet(
         ax.set_title("Signal: Median Next Return by Weight Decile")
         ax.set_xlabel("Weight decile (active universe)")
         ax.set_ylabel("Median next return (%)")
-        if counts is not None:
-            ax.set_xticks(x, [f"{d}\n(n={int(n)})" for d, n in zip(x, counts.fillna(0).astype(int))])
         signal_blocks.append(
             _plot_block(
                 title="Signal: Median Next Return by Weight Decile",
@@ -474,9 +641,6 @@ def tearsheet(
         mean_excess = wf_deciles - rf_per_period
         sharpe = (mean_excess / std) * np.sqrt(annual_factor)
         sharpe = sharpe.replace([np.inf, -np.inf], np.nan)
-        counts = None
-        if isinstance(wf_deciles_count, pd.Series) and len(wf_deciles_count.index) > 0:
-            counts = wf_deciles_count.reindex(sharpe.index)
         x = sharpe.index.astype(int).to_numpy()
         y = sharpe.to_numpy(dtype=float)
         fig, ax = plt.subplots(figsize=(10, 3.5))
@@ -485,8 +649,6 @@ def tearsheet(
         ax.set_title("Signal: Sharpe by Weight Decile (Annualized)")
         ax.set_xlabel("Weight decile (active universe)")
         ax.set_ylabel("Sharpe (annualized)")
-        if counts is not None:
-            ax.set_xticks(x, [f"{d}\n(n={int(n)})" for d, n in zip(x, counts.fillna(0).astype(int))])
         signal_blocks.append(
             _plot_block(
                 title="Signal: Sharpe by Weight Decile (Annualized)",
@@ -499,9 +661,6 @@ def tearsheet(
         )
 
     if isinstance(wf_deciles_contrib, pd.Series) and len(wf_deciles_contrib.index) > 0:
-        counts = None
-        if isinstance(wf_deciles_count, pd.Series) and len(wf_deciles_count.index) > 0:
-            counts = wf_deciles_count.reindex(wf_deciles_contrib.index)
         x = wf_deciles_contrib.index.astype(int).to_numpy()
         y = (wf_deciles_contrib * 100.0).to_numpy(dtype=float)
         fig, ax = plt.subplots(figsize=(10, 3.5))
@@ -510,8 +669,6 @@ def tearsheet(
         ax.set_title("Signal: Mean Next Return Contribution by Weight Decile")
         ax.set_xlabel("Weight decile (active universe)")
         ax.set_ylabel("Mean contribution to next return (%)")
-        if counts is not None:
-            ax.set_xticks(x, [f"{d}\n(n={int(n)})" for d, n in zip(x, counts.fillna(0).astype(int))])
         signal_blocks.append(
             _plot_block(
                 title="Signal: Mean Next Return Contribution by Weight Decile",
@@ -531,9 +688,6 @@ def tearsheet(
     ):
         long_c = wf_deciles_contrib_long
         short_c = wf_deciles_contrib_short.reindex(long_c.index)
-        counts = None
-        if isinstance(wf_deciles_count, pd.Series) and len(wf_deciles_count.index) > 0:
-            counts = wf_deciles_count.reindex(long_c.index)
         x = long_c.index.astype(int).to_numpy()
         long_y = (long_c * 100.0).to_numpy(dtype=float)
         short_y = (short_c * 100.0).to_numpy(dtype=float)
@@ -545,8 +699,6 @@ def tearsheet(
         ax.set_xlabel("Weight decile (active universe)")
         ax.set_ylabel("Mean contribution to next return (%)")
         ax.legend(loc="best")
-        if counts is not None:
-            ax.set_xticks(x, [f"{d}\n(n={int(n)})" for d, n in zip(x, counts.fillna(0).astype(int))])
         signal_blocks.append(
             _plot_block(
                 title="Signal: Mean Contribution by Weight Decile (Long and Short)",
@@ -595,7 +747,14 @@ def tearsheet(
             )
         search_section_html = "<h2>Parameter Search</h2>" + "".join(heatmaps)
 
-    plots_section = "<h2>Performance</h2>" + "".join(plots_html) + signal_section_html + search_section_html
+    plots_section = (
+        "<h2>Performance</h2>"
+        + "".join(plots_html)
+        + trading_section_html
+        + exposure_section_html
+        + signal_section_html
+        + search_section_html
+    )
 
     html = f"""<!doctype html>
 <html lang="en">

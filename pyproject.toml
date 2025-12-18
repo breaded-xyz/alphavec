@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "alphavec"
-version = "0.4.0"
+version = "0.4.2"
 description = "Fast minimalist vector-based grid search and backtesting for perpetual futures."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -15,6 +15,7 @@ dependencies = [
   "pandas",
   "matplotlib",
   "seaborn",
+  "scipy",
   "tqdm"
 ]
 
