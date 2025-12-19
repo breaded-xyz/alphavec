@@ -75,8 +75,7 @@ def tearsheet(
     Render a self-contained HTML tearsheet (no JS) from metrics and returns.
 
     The report includes performance charts and (when available) signal diagnostics such as
-    IC/Rank-IC, top-bottom decile spread, selection-vs-directional attribution, decile curves,
-    and alpha decay by lag vs next-period returns.
+    signal-vs-return scatters, decile curves, and alpha decay by lag vs next-period returns.
 
     Args:
         sim_result: Optional `SimulationResult` from `simulate()`. If omitted and `grid_results` is
@@ -284,28 +283,6 @@ def tearsheet(
     # Trading Activity & Costs section
     trading_blocks: list[str] = []
 
-    # Turnover
-    turnover_series = metrics.attrs.get("turnover")
-    if isinstance(turnover_series, pd.Series) and len(turnover_series) > 0:
-        turnover_pct = turnover_series * 100.0
-        turnover_plot = _smooth(turnover_pct, smooth_window)
-        fig, ax = plt.subplots(figsize=(10, 3.5))
-        ax.plot(turnover_plot.index, turnover_plot.values, color="#2ca02c", linewidth=2)
-        title = f"Portfolio Turnover (%) - {smooth_window}p smooth" if smooth_window > 0 else "Portfolio Turnover (%)"
-        ax.set_title(title)
-        ax.set_xlabel("Date")
-        ax.set_ylabel("Turnover (%)")
-        trading_blocks.append(
-            _plot_block(
-                title="Portfolio Turnover (%)",
-                fig=fig,
-                note=(
-                    "Period-over-period portfolio turnover as a percentage of portfolio value.",
-                    "Higher turnover increases transaction costs; sustained high turnover may erode alpha and suggests signal instability.",
-                ),
-            )
-        )
-
     # Transaction costs
     transaction_costs = metrics.attrs.get("transaction_costs")
     if isinstance(transaction_costs, pd.Series) and len(transaction_costs) > 0:
@@ -450,106 +427,83 @@ def tearsheet(
 
     wf = metrics.attrs.get("weight_forward")
     if isinstance(wf, pd.DataFrame) and len(wf.index) > 0:
-        # IC / Rank IC
-        if ("ic" in wf.columns) or ("rank_ic" in wf.columns):
-            fig, ax = plt.subplots(figsize=(10, 3.5))
-            if "ic" in wf.columns:
-                ic = pd.to_numeric(wf["ic"], errors="coerce")
-                if smooth_window > 0:
-                    ax.plot(ic.index, ic.values, label="IC (raw)", linewidth=1, alpha=0.25)
-                    ic_plot = _smooth(ic, smooth_window)
-                    ax.plot(ic_plot.index, ic_plot.values, label=f"IC ({smooth_window}p smooth)", linewidth=2)
-                else:
-                    ax.plot(ic.index, ic.values, label="IC", linewidth=2)
-            if "rank_ic" in wf.columns:
-                ric = pd.to_numeric(wf["rank_ic"], errors="coerce")
-                if smooth_window > 0:
-                    ax.plot(ric.index, ric.values, label="Rank IC (raw)", linewidth=1, alpha=0.25)
-                    ric_plot = _smooth(ric, smooth_window)
-                    ax.plot(ric_plot.index, ric_plot.values, label=f"Rank IC ({smooth_window}p smooth)", linewidth=2)
-                else:
-                    ax.plot(ric.index, ric.values, label="Rank IC", linewidth=2)
-            ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-            title = f"Signal: IC - {smooth_window}p smooth" if smooth_window > 0 else "Signal: IC"
-            ax.set_title(title)
-            ax.set_xlabel("Date")
-            ax.set_ylabel("Correlation")
-            ax.legend(loc="best")
-            signal_blocks.append(
-                _plot_block(
-                    title="Signal: IC",
-                    fig=fig,
-                    note=(
-                        "Per-period cross-sectional correlation between weights at t and next-period returns (IC).",
-                        "Sustained positive values suggest predictive alignment; noisy or near-zero values suggest a weak or unstable signal.",
-                    ),
+        if ("directionality" in wf.columns) and ("forward_return_per_gross" in wf.columns):
+            x = pd.to_numeric(wf["directionality"], errors="coerce")
+            y = pd.to_numeric(wf["forward_return_per_gross"], errors="coerce") * 100.0
+            mask = np.isfinite(x) & np.isfinite(y)
+            if int(mask.sum()) > 2:
+                x_vals = x[mask].to_numpy(dtype=float)
+                y_vals = y[mask].to_numpy(dtype=float)
+                fig, ax = plt.subplots(figsize=(10, 3.5))
+                ax.scatter(x_vals, y_vals, s=18, alpha=0.6, color="#1f77b4")
+                if np.unique(x_vals).size > 1:
+                    slope, intercept = np.polyfit(x_vals, y_vals, 1)
+                    x_line = np.linspace(x_vals.min(), x_vals.max(), 100)
+                    ax.plot(
+                        x_line,
+                        slope * x_line + intercept,
+                        color="#d62728",
+                        linewidth=2,
+                        label=f"Fit: y = {slope:.3f}x + {intercept:.3f}",
+                    )
+                    ax.legend(loc="best")
+                ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+                ax.set_title("Signal vs Next-Period Return (Per Gross)")
+                ax.set_xlabel("Signal directionality (net / gross)")
+                ax.set_ylabel("Next-period return per gross (%)")
+                signal_blocks.append(
+                    _plot_block(
+                        title="Signal vs Next-Period Return (Per Gross)",
+                        fig=fig,
+                        note=(
+                            "Scatter of per-period signal directionality (net/gross) versus next-period return per gross (%).",
+                            "An upward slope suggests directional tilt aligns with next-period returns; a flat fit suggests limited directional edge.",
+                        ),
+                    )
                 )
-            )
 
-        # Top-bottom spread
-        if "top_bottom_spread" in wf.columns:
-            spread = pd.to_numeric(wf["top_bottom_spread"], errors="coerce") * 100.0
-            fig, ax = plt.subplots(figsize=(10, 3.5))
-            if smooth_window > 0:
-                ax.plot(spread.index, spread.values, label="Spread (raw)", linewidth=1, alpha=0.25)
-                spread_plot = _smooth(spread, smooth_window)
-                ax.plot(spread_plot.index, spread_plot.values, label=f"Spread ({smooth_window}p smooth)", linewidth=2)
-            else:
-                ax.plot(spread.index, spread.values, label="Spread", linewidth=2)
-            ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-            title = f"Signal: Top-Bottom Decile Spread (%) - {smooth_window}p smooth" if smooth_window > 0 else "Signal: Top-Bottom Decile Spread (%)"
-            ax.set_title(title)
-            ax.set_xlabel("Date")
-            ax.set_ylabel("Spread (%)")
-            ax.legend(loc="best")
-            signal_blocks.append(
-                _plot_block(
-                    title="Signal: Top-Bottom Decile Spread (%)",
-                    fig=fig,
-                    note=(
-                        "Next-period return spread (%) between the top and bottom weight deciles each period, with a rolling mean overlay.",
-                        "Positive and stable spread indicates separation between high- and low-weighted assets; instability often indicates regime dependence.",
-                    ),
+        ic_col = None
+        ic_label = ""
+        if "ic" in wf.columns:
+            ic_col = "ic"
+            ic_label = "IC"
+        elif "rank_ic" in wf.columns:
+            ic_col = "rank_ic"
+            ic_label = "Rank IC"
+        if ic_col is not None and "forward_return_per_gross" in wf.columns:
+            x = pd.to_numeric(wf[ic_col], errors="coerce")
+            y = pd.to_numeric(wf["forward_return_per_gross"], errors="coerce") * 100.0
+            mask = np.isfinite(x) & np.isfinite(y)
+            if int(mask.sum()) > 2:
+                x_vals = x[mask].to_numpy(dtype=float)
+                y_vals = y[mask].to_numpy(dtype=float)
+                fig, ax = plt.subplots(figsize=(10, 3.5))
+                ax.scatter(x_vals, y_vals, s=18, alpha=0.6, color="#1f77b4")
+                if np.unique(x_vals).size > 1:
+                    slope, intercept = np.polyfit(x_vals, y_vals, 1)
+                    x_line = np.linspace(x_vals.min(), x_vals.max(), 100)
+                    ax.plot(
+                        x_line,
+                        slope * x_line + intercept,
+                        color="#d62728",
+                        linewidth=2,
+                        label=f"Fit: y = {slope:.3f}x + {intercept:.3f}",
+                    )
+                    ax.legend(loc="best")
+                ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+                ax.set_title(f"Signal {ic_label} vs Next-Period Return (Per Gross)")
+                ax.set_xlabel(f"Signal {ic_label}")
+                ax.set_ylabel("Next-period return per gross (%)")
+                signal_blocks.append(
+                    _plot_block(
+                        title=f"Signal {ic_label} vs Next-Period Return (Per Gross)",
+                        fig=fig,
+                        note=(
+                            f"Scatter of per-period {ic_label} versus next-period return per gross (%).",
+                            "Useful for market-neutral strategies where directionality is near zero; higher IC should align with higher returns.",
+                        ),
+                    )
                 )
-            )
-
-        # Selection vs directional (per gross)
-        sel_col = "forward_return_selection_per_gross"
-        dir_col = "forward_return_directional_per_gross"
-        if (sel_col in wf.columns) or (dir_col in wf.columns):
-            fig, ax = plt.subplots(figsize=(10, 3.5))
-            if sel_col in wf.columns:
-                sel = pd.to_numeric(wf[sel_col], errors="coerce") * 100.0
-                if smooth_window > 0:
-                    ax.plot(sel.index, sel.values, label="Selection (raw)", linewidth=1, alpha=0.25)
-                    sel_plot = _smooth(sel, smooth_window)
-                    ax.plot(sel_plot.index, sel_plot.values, label=f"Selection ({smooth_window}p smooth)", linewidth=2)
-                else:
-                    ax.plot(sel.index, sel.values, label="Selection", linewidth=2)
-            if dir_col in wf.columns:
-                dirn = pd.to_numeric(wf[dir_col], errors="coerce") * 100.0
-                if smooth_window > 0:
-                    ax.plot(dirn.index, dirn.values, label="Directional (raw)", linewidth=1, alpha=0.25)
-                    dirn_plot = _smooth(dirn, smooth_window)
-                    ax.plot(dirn_plot.index, dirn_plot.values, label=f"Directional ({smooth_window}p smooth)", linewidth=2)
-                else:
-                    ax.plot(dirn.index, dirn.values, label="Directional", linewidth=2)
-            ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-            title = f"Signal: Attribution (Per Gross, %) - {smooth_window}p smooth" if smooth_window > 0 else "Signal: Attribution (Per Gross, %)"
-            ax.set_title(title)
-            ax.set_xlabel("Date")
-            ax.set_ylabel("Contribution (%)")
-            ax.legend(loc="best")
-            signal_blocks.append(
-                _plot_block(
-                    title="Signal: Attribution (Per Gross, %)",
-                    fig=fig,
-                    note=(
-                        "Rolling decomposition of forward return per unit gross weight into selection vs directional components.",
-                        "Selection reflects cross-sectional picking skill; directional reflects net bias interacting with the average universe return.",
-                    ),
-                )
-            )
 
     # Alpha decay by lag (next-period return types)
     decay = metrics.attrs.get("alpha_decay_next_return_by_type")
