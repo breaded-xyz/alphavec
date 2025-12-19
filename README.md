@@ -65,6 +65,7 @@ Requires Python `>=3.10`
 - NaNs in `exec_prices` or `close_prices` imply the asset is not tradable that period.
 - NaNs in `funding_rates` are treated as 0, and funding is always 0 when `close_prices` is NaN.
 - Positions will always be closed if target weight is zero, regardless of minimum notional filter.
+- Use `SimConfig.start_period`/`end_period` to slice inputs before simulating: `str` uses `loc`, `int` uses `iloc`.
 
 ### Simulation
 
@@ -100,6 +101,8 @@ result = simulate(
         order_notional_min=10,
         fee_rate=0.00025,       # 2.5 bps per trade
         slippage_rate=0.001,    # 10 bps per trade
+        start_period="2023-01-01",
+        end_period="2025-12-06",
         init_cash=10_000,
         freq_rule="1D",
         trading_days_year=365,

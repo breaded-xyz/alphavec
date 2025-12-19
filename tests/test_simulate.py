@@ -287,6 +287,80 @@ def test_simulate_series_inputs():
     assert pd.isna(metrics.loc["Benchmark Asset", "Value"])
 
 
+def test_simulate_period_slicing():
+    # Case: Datetime string slicing uses loc semantics.
+    dates = pd.date_range("2024-01-01", periods=6, freq="1D")
+    close_prices = pd.DataFrame(
+        {"BTC": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]},
+        index=dates,
+    )
+    exec_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
+    weights = pd.DataFrame({"BTC": [1.0] * len(dates)}, index=dates)
+
+    config = {
+        "init_cash": 1000.0,
+        "fee_rate": 0.0,
+        "slippage_rate": 0.0,
+        "order_notional_min": 0.0,
+        "freq_rule": "1D",
+        "trading_days_year": 365,
+        "risk_free_rate": 0.0,
+    }
+
+    result_loc = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        start_period="2024-01-02",
+        end_period="2024-01-05",
+        **config,
+    )
+    expected_loc = _sim(
+        weights=weights.loc["2024-01-02":"2024-01-05"],
+        close_prices=close_prices.loc["2024-01-02":"2024-01-05"],
+        exec_prices=exec_prices.loc["2024-01-02":"2024-01-05"],
+        funding_rates=None,
+        **config,
+    )
+
+    assert result_loc.returns.index.equals(expected_loc.returns.index)
+    assert np.allclose(result_loc.returns.to_numpy(), expected_loc.returns.to_numpy())
+    assert result_loc.metrics.loc["Simulation start date", "Value"] == expected_loc.metrics.loc[
+        "Simulation start date", "Value"
+    ]
+    assert result_loc.metrics.loc["Simulation end date", "Value"] == expected_loc.metrics.loc[
+        "Simulation end date", "Value"
+    ]
+
+    # Case: iloc slicing uses positional semantics.
+    result_iloc = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        start_period=1,
+        end_period=4,
+        **config,
+    )
+    expected_iloc = _sim(
+        weights=weights.iloc[1:4],
+        close_prices=close_prices.iloc[1:4],
+        exec_prices=exec_prices.iloc[1:4],
+        funding_rates=None,
+        **config,
+    )
+
+    assert result_iloc.returns.index.equals(expected_iloc.returns.index)
+    assert np.allclose(result_iloc.returns.to_numpy(), expected_iloc.returns.to_numpy())
+    assert result_iloc.metrics.loc["Simulation start date", "Value"] == expected_iloc.metrics.loc[
+        "Simulation start date", "Value"
+    ]
+    assert result_iloc.metrics.loc["Simulation end date", "Value"] == expected_iloc.metrics.loc[
+        "Simulation end date", "Value"
+    ]
+
+
 def test_simulate_order_notional_min_skips_small_rebalance():
     # Case: Small rebalance below min notional is skipped.
     dates = pd.date_range("2024-01-01", periods=3, freq="1D")

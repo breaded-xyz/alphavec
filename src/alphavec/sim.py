@@ -82,6 +82,8 @@ class SimConfig:
     order_notional_min: float = 0.0
     fee_rate: float = 0.0
     slippage_rate: float = 0.0
+    start_period: str | int | None = None
+    end_period: str | int | None = None
     freq_rule: str = "1D"
     trading_days_year: int = 365
     risk_free_rate: float = 0.0
@@ -159,6 +161,49 @@ def _normalize_inputs(
     fr = fr.astype(float)
 
     return _Inputs(weights=w, close_prices=cp, exec_prices=ep, funding_rates=fr)
+
+
+def _slice_inputs_by_period(
+    *,
+    weights: pd.DataFrame | pd.Series,
+    close_prices: pd.DataFrame | pd.Series,
+    exec_prices: pd.DataFrame | pd.Series,
+    funding_rates: pd.DataFrame | pd.Series | None,
+    start_period: str | int | None,
+    end_period: str | int | None,
+) -> tuple[
+    pd.DataFrame | pd.Series,
+    pd.DataFrame | pd.Series,
+    pd.DataFrame | pd.Series,
+    pd.DataFrame | pd.Series | None,
+]:
+    """
+    Slice inputs before normalization using loc (datetime) or iloc (positional) semantics.
+    """
+    if start_period is None and end_period is None:
+        return weights, close_prices, exec_prices, funding_rates
+
+    start_is_str = isinstance(start_period, str)
+    end_is_str = isinstance(end_period, str)
+    start_is_int = isinstance(start_period, int)
+    end_is_int = isinstance(end_period, int)
+
+    if (start_is_str or end_is_str) and (start_is_int or end_is_int):
+        raise ValueError("start_period and end_period must both be str or both be int when set")
+
+    slicer = slice(start_period, end_period)
+    if start_is_str or end_is_str:
+        weights = weights.loc[slicer]
+        close_prices = close_prices.loc[slicer]
+        exec_prices = exec_prices.loc[slicer]
+        funding_rates = funding_rates.loc[slicer] if funding_rates is not None else None
+    else:
+        weights = weights.iloc[slicer]
+        close_prices = close_prices.iloc[slicer]
+        exec_prices = exec_prices.iloc[slicer]
+        funding_rates = funding_rates.iloc[slicer] if funding_rates is not None else None
+
+    return weights, close_prices, exec_prices, funding_rates
 
 
 def _run_simulation(
@@ -346,7 +391,7 @@ def simulate(
             Must have same index and columns as market.close_prices.
         market: Market data inputs (close/exec prices and optional funding).
             All DataFrames must have matching index and columns.
-        config: Simulation configuration (costs, annualization, benchmark, init cash).
+        config: Simulation configuration (costs, annualization, benchmark, init cash, slicing).
 
     Returns:
         A SimulationResult with returns and metrics:
@@ -372,11 +417,20 @@ def simulate(
 
     cfg = config or SimConfig()
 
-    inputs = _normalize_inputs(
+    weights, close_prices, exec_prices, funding_rates = _slice_inputs_by_period(
         weights=weights,
         close_prices=market.close_prices,
         exec_prices=market.exec_prices,
         funding_rates=market.funding_rates,
+        start_period=cfg.start_period,
+        end_period=cfg.end_period,
+    )
+
+    inputs = _normalize_inputs(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=funding_rates,
     )
 
     run = _run_simulation(
