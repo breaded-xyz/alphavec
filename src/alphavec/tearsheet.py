@@ -138,27 +138,47 @@ def tearsheet(
     if not isinstance(benchmark_equity, pd.Series):
         benchmark_equity = None
 
-    equity_pct = (equity / float(init_cash) - 1.0) * 100.0
-    equity_pct = equity_pct.rename("Portfolio %")
+    equity_pct_series = metrics.attrs.get("equity_pct")
+    if isinstance(equity_pct_series, pd.Series) and equity_pct_series.index.equals(equity.index):
+        equity_pct = equity_pct_series
+    else:
+        equity_pct = (equity / float(init_cash) - 1.0).mul(100.0).rename("equity_pct")
+        metrics.attrs["equity_pct"] = equity_pct
+    equity_pct_plot = equity_pct.rename("Portfolio %")
 
     benchmark_equity_pct: pd.Series | None = None
-    if benchmark_equity is not None and len(benchmark_equity) == len(equity):
-        benchmark_equity_pct = (benchmark_equity / float(init_cash) - 1.0) * 100.0
+    if isinstance(metrics.attrs.get("benchmark_equity_pct"), pd.Series):
+        benchmark_equity_pct = metrics.attrs["benchmark_equity_pct"]
+    elif benchmark_equity is not None and len(benchmark_equity) == len(equity):
+        benchmark_equity_pct = (
+            benchmark_equity.div(float(init_cash)).sub(1.0).mul(100.0).rename("benchmark_equity_pct")
+        )
+        metrics.attrs["benchmark_equity_pct"] = benchmark_equity_pct
+
+    benchmark_equity_pct_plot: pd.Series | None = None
+    if benchmark_equity_pct is not None and len(benchmark_equity_pct) == len(equity):
         label = (
             f"Benchmark ({benchmark_asset}) %"
             if isinstance(benchmark_asset, str) and benchmark_asset
             else "Benchmark %"
         )
-        benchmark_equity_pct = benchmark_equity_pct.rename(label)
+        benchmark_equity_pct_plot = benchmark_equity_pct.rename(label)
 
-    dd_pct = (equity / equity.cummax() - 1.0) * 100.0
+    dd_pct_series = metrics.attrs.get("drawdown_pct")
+    if isinstance(dd_pct_series, pd.Series) and dd_pct_series.index.equals(equity.index):
+        dd_pct = dd_pct_series
+    else:
+        dd_pct = (equity / equity.cummax() - 1.0).mul(100.0).rename("drawdown_pct")
+        metrics.attrs["drawdown_pct"] = dd_pct
 
-    # Helper function for smoothing time series
-    def _smooth(s: pd.Series, window: int) -> pd.Series:
+    def _smooth_series(series: pd.Series, window: int) -> pd.Series:
+        """
+        Smooth a time series for rendering only.
+        """
         if window <= 1:
-            return s
+            return series
         min_periods = max(3, window // 5)
-        return s.rolling(window=window, min_periods=min_periods).mean()
+        return series.rolling(window=window, min_periods=min_periods).mean()
 
     # Use smooth_periods, with a minimum of 2 for rolling sharpe to be meaningful
     smooth_window = max(0, int(smooth_periods))
@@ -176,6 +196,8 @@ def tearsheet(
     roll_mean = excess.rolling(window=rolling_sharpe_window, min_periods=min_periods).mean()
     roll_std = excess.rolling(window=rolling_sharpe_window, min_periods=min_periods).std(ddof=1)
     rolling_sharpe = (roll_mean / roll_std) * np.sqrt(annual_factor)
+    rolling_key = f"rolling_sharpe_{rolling_sharpe_window}"
+    metrics.attrs[rolling_key] = rolling_sharpe.rename(rolling_key)
 
     # Metrics table
     table_html = metrics.copy()
@@ -187,9 +209,13 @@ def tearsheet(
 
     # Equity
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(equity_pct.index, equity_pct.values, label=equity_pct.name)
-    if benchmark_equity_pct is not None:
-        ax.plot(benchmark_equity_pct.index, benchmark_equity_pct.values, label=benchmark_equity_pct.name)
+    ax.plot(equity_pct_plot.index, equity_pct_plot.values, label=equity_pct_plot.name)
+    if benchmark_equity_pct_plot is not None:
+        ax.plot(
+            benchmark_equity_pct_plot.index,
+            benchmark_equity_pct_plot.values,
+            label=benchmark_equity_pct_plot.name,
+        )
     ax.set_title("Equity Curve (Cumulative Return %)")
     ax.set_xlabel("Date")
     ax.set_ylabel("Cumulative return (%)")
@@ -287,8 +313,7 @@ def tearsheet(
     # Transaction costs
     transaction_costs = metrics.attrs.get("transaction_costs")
     if isinstance(transaction_costs, pd.Series) and len(transaction_costs) > 0:
-        costs_pct = transaction_costs * 100.0
-        costs_plot = _smooth(costs_pct, smooth_window)
+        costs_plot = _smooth_series(transaction_costs, smooth_window) * 100.0
         fig, ax = plt.subplots(figsize=(10, 3.5))
         ax.plot(costs_plot.index, costs_plot.values, color="#d62728", linewidth=2)
         title = (
@@ -313,7 +338,7 @@ def tearsheet(
     # Number of positions
     n_positions = metrics.attrs.get("n_positions")
     if isinstance(n_positions, pd.Series) and len(n_positions) > 0:
-        n_positions_plot = _smooth(n_positions, smooth_window)
+        n_positions_plot = _smooth_series(n_positions, smooth_window)
         fig, ax = plt.subplots(figsize=(10, 3.5))
         ax.plot(n_positions_plot.index, n_positions_plot.values, color="#9467bd", linewidth=2)
         title = (
@@ -350,12 +375,10 @@ def tearsheet(
     ):
         fig, ax = plt.subplots(figsize=(10, 3.5))
         if isinstance(gross_exposure, pd.Series) and len(gross_exposure) > 0:
-            gross_pct = gross_exposure * 100.0
-            gross_plot = _smooth(gross_pct, smooth_window)
+            gross_plot = _smooth_series(gross_exposure, smooth_window) * 100.0
             ax.plot(gross_plot.index, gross_plot.values, label="Gross Exposure", linewidth=2, color="#1f77b4")
         if isinstance(net_exposure, pd.Series) and len(net_exposure) > 0:
-            net_pct = net_exposure * 100.0
-            net_plot = _smooth(net_pct, smooth_window)
+            net_plot = _smooth_series(net_exposure, smooth_window) * 100.0
             ax.plot(net_plot.index, net_plot.values, label="Net Exposure", linewidth=2, color="#ff7f0e")
         ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
         title = (
@@ -381,7 +404,7 @@ def tearsheet(
     # Concentration (Herfindahl index if available)
     concentration = metrics.attrs.get("concentration")
     if isinstance(concentration, pd.Series) and len(concentration) > 0:
-        concentration_plot = _smooth(concentration, smooth_window)
+        concentration_plot = _smooth_series(concentration, smooth_window)
         fig, ax = plt.subplots(figsize=(10, 3.5))
         ax.plot(concentration_plot.index, concentration_plot.values, color="#8c564b", linewidth=2)
         title = (

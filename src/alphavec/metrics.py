@@ -10,6 +10,142 @@ from typing import Final
 import numpy as np
 import pandas as pd
 
+
+class SignalArtifacts:
+    """
+    Signal-related artifacts derived from weights vs next returns.
+    """
+
+    def __init__(self, attrs: dict[str, object]):
+        self._attrs = attrs
+
+    @property
+    def weight_forward(self) -> pd.DataFrame | None:
+        return self._attrs.get("weight_forward")
+
+    @property
+    def weight_forward_deciles(self) -> pd.Series | None:
+        return self._attrs.get("weight_forward_deciles")
+
+    @property
+    def weight_forward_deciles_median(self) -> pd.Series | None:
+        return self._attrs.get("weight_forward_deciles_median")
+
+    @property
+    def weight_forward_deciles_std(self) -> pd.Series | None:
+        return self._attrs.get("weight_forward_deciles_std")
+
+    @property
+    def weight_forward_deciles_count(self) -> pd.Series | None:
+        return self._attrs.get("weight_forward_deciles_count")
+
+    @property
+    def weight_forward_deciles_contrib(self) -> pd.Series | None:
+        return self._attrs.get("weight_forward_deciles_contrib")
+
+    @property
+    def weight_forward_deciles_contrib_long(self) -> pd.Series | None:
+        return self._attrs.get("weight_forward_deciles_contrib_long")
+
+    @property
+    def weight_forward_deciles_contrib_short(self) -> pd.Series | None:
+        return self._attrs.get("weight_forward_deciles_contrib_short")
+
+    @property
+    def alpha_decay_next_return_by_type(self) -> pd.DataFrame | None:
+        return self._attrs.get("alpha_decay_next_return_by_type")
+
+    def get(self, key: str, default: object | None = None) -> object:
+        return self._attrs.get(key, default)
+
+
+class MetricsArtifacts:
+    """
+    Typed accessors for metrics.attrs artifacts.
+    """
+
+    def __init__(self, attrs: dict[str, object]):
+        self._attrs = attrs
+        self._signal = SignalArtifacts(attrs)
+
+    @property
+    def returns(self) -> pd.Series | None:
+        return self._attrs.get("returns")
+
+    @property
+    def returns_pct(self) -> pd.Series | None:
+        return self._attrs.get("returns_pct")
+
+    @property
+    def equity(self) -> pd.Series | None:
+        return self._attrs.get("equity")
+
+    @property
+    def equity_pct(self) -> pd.Series | None:
+        return self._attrs.get("equity_pct")
+
+    @property
+    def drawdown_pct(self) -> pd.Series | None:
+        return self._attrs.get("drawdown_pct")
+
+    @property
+    def init_cash(self) -> float | None:
+        return self._attrs.get("init_cash")
+
+    @property
+    def benchmark_equity(self) -> pd.Series | None:
+        return self._attrs.get("benchmark_equity")
+
+    @property
+    def benchmark_equity_pct(self) -> pd.Series | None:
+        return self._attrs.get("benchmark_equity_pct")
+
+    @property
+    def transaction_costs(self) -> pd.Series | None:
+        return self._attrs.get("transaction_costs")
+
+    @property
+    def n_positions(self) -> pd.Series | None:
+        return self._attrs.get("n_positions")
+
+    @property
+    def net_exposure(self) -> pd.Series | None:
+        return self._attrs.get("net_exposure")
+
+    @property
+    def gross_exposure(self) -> pd.Series | None:
+        return self._attrs.get("gross_exposure")
+
+    @property
+    def long_exposure(self) -> pd.Series | None:
+        return self._attrs.get("long_exposure")
+
+    @property
+    def short_exposure(self) -> pd.Series | None:
+        return self._attrs.get("short_exposure")
+
+    @property
+    def concentration(self) -> pd.Series | None:
+        return self._attrs.get("concentration")
+
+    @property
+    def signal(self) -> SignalArtifacts:
+        return self._signal
+
+    def rolling_sharpe(self, window: int = 30) -> pd.Series | None:
+        return self._attrs.get(f"rolling_sharpe_{window}")
+
+    def get(self, key: str, default: object | None = None) -> object:
+        return self._attrs.get(key, default)
+
+
+def metrics_artifacts(metrics: pd.DataFrame) -> MetricsArtifacts:
+    """
+    Return a typed accessor for metrics.attrs artifacts.
+    """
+    return MetricsArtifacts(metrics.attrs)
+
+
 TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Period frequency": "Sampling frequency used for annualization. Smaller periods are generally more granular (but can be noisier).",
     "Benchmark Asset": "Column name of the benchmark asset used for alpha/beta and benchmark charts (if provided).",
@@ -312,7 +448,9 @@ def _weight_forward_diagnostics(
             short_gross_w[t] = short_denom
             if short_denom > 0.0:
                 short_hit_w[t] = float(short_w_abs[r_m[short_mask] < 0.0].sum() / short_denom)
-                short_ret_per_gross[t] = float(np.sum(w_m[short_mask] * r_m[short_mask]) / short_denom)
+                short_ret_per_gross[t] = float(
+                    np.sum(w_m[short_mask] * r_m[short_mask]) / short_denom
+                )
 
         n = int(w_m.shape[0])
         if n >= 10:
@@ -747,7 +885,9 @@ def _metrics(
         "Top-bottom decile spread t-stat (next)": _t_stat(wf["top_bottom_spread"]),
         "Weighted long hit rate mean (next)": float(wf["long_hit_weighted"].mean(skipna=True)),
         "Weighted short hit rate mean (next)": float(wf["short_hit_weighted"].mean(skipna=True)),
-        "Forward return per gross mean (next)": float(wf["forward_return_per_gross"].mean(skipna=True)),
+        "Forward return per gross mean (next)": float(
+            wf["forward_return_per_gross"].mean(skipna=True)
+        ),
         "Forward return selection per gross mean (next)": float(
             wf["forward_return_selection_per_gross"].mean(skipna=True)
         ),
@@ -818,11 +958,17 @@ def _metrics(
     # Count non-zero, non-nan weights per period (the strategy's active universe at each time)
     weights_active = weights.fillna(0.0)
     n_positions_per_period = (weights_active.abs() > 1e-8).sum(axis=1).values
-    df.attrs["n_positions"] = pd.Series(n_positions_per_period, index=weights.index, name="n_positions")
+    df.attrs["n_positions"] = pd.Series(
+        n_positions_per_period, index=weights.index, name="n_positions"
+    )
 
     # Exposure & Risk Management time series
-    df.attrs["net_exposure"] = pd.Series(net_exposure_ratio, index=weights.index, name="net_exposure")
-    df.attrs["gross_exposure"] = pd.Series(gross_exposure_ratio, index=weights.index, name="gross_exposure")
+    df.attrs["net_exposure"] = pd.Series(
+        net_exposure_ratio, index=weights.index, name="net_exposure"
+    )
+    df.attrs["gross_exposure"] = pd.Series(
+        gross_exposure_ratio, index=weights.index, name="gross_exposure"
+    )
 
     # Compute long and short exposure from positions_hist (actual positions held, not weights)
     # positions_hist is in dollar terms, so divide by equity to get % of portfolio

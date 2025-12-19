@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 from pathlib import Path
 
-from alphavec import MarketData, SimConfig, simulate, tearsheet
+from alphavec import MarketData, SimConfig, metrics_artifacts, simulate, tearsheet
 
 
 def _sim(
@@ -524,9 +524,94 @@ def test_tearsheet_renders_html(tmp_path: Path):
     html = tearsheet(sim_result=result, output_path=out, smooth_periods=1)
     assert "<title>Tearsheet</title>" in html
     assert "<h1>Tearsheet</h1>" in html
-    assert "Equity Curve" in html
-    assert "Median Next Return by Weight Decile" in html
-    assert "Sharpe by Weight Decile" in html
-    assert "Mean Next Return Contribution by Weight Decile" in html
-    assert "Mean Contribution by Weight Decile (Long and Short)" in html
+    assert "Equity Curve (Cumulative Return %)" in html
+    assert "Drawdown (%)" in html
+    assert "Rolling Sharpe" in html
+    assert "Returns Distribution (Per-Period, %)" in html
+    assert "Returns Q-Q Plot" in html
+    assert "Signal: Next-Period Return by Weight Decile (Mean/Median)" in html
+    assert "Signal: Next-Period Return Contribution by Weight Decile (Long/Short)" in html
     assert out.read_text(encoding="utf-8").startswith("<!doctype html>")
+
+
+def test_tearsheet_does_not_store_smoothed_series(tmp_path: Path):
+    # Case: Smoothed series are not stored; rolling Sharpe is still stored per period.
+    dates = pd.date_range("2024-01-01", periods=6, freq="1D")
+    close_prices = pd.DataFrame({"BTC": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]}, index=dates)
+    exec_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
+    weights = pd.DataFrame({"BTC": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]}, index=dates)
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.001,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+        freq_rule="1D",
+        trading_days_year=365,
+        risk_free_rate=0.0,
+    )
+    out = tmp_path / "smooth.html"
+    tearsheet(sim_result=result, output_path=out, smooth_periods=3)
+
+    metrics = result.metrics
+    assert "rolling_sharpe_3" in metrics.attrs
+    series = metrics.attrs["rolling_sharpe_3"]
+    assert isinstance(series, pd.Series)
+    assert series.index.equals(result.returns.index)
+    assert not any("_smooth_" in key for key in metrics.attrs)
+
+    # Case: No smoothing also avoids smoothed series keys.
+    result_no_smooth = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.001,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+        freq_rule="1D",
+        trading_days_year=365,
+        risk_free_rate=0.0,
+    )
+    out = tmp_path / "no_smooth.html"
+    tearsheet(sim_result=result_no_smooth, output_path=out, smooth_periods=0)
+    assert not any("_smooth_" in key for key in result_no_smooth.metrics.attrs)
+
+
+def test_metrics_artifacts():
+    # Case: SimulationResult.artifacts exposes per-period series.
+    dates = pd.date_range("2024-01-01", periods=6, freq="1D")
+    close_prices = pd.DataFrame({"BTC": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]}, index=dates)
+    exec_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
+    weights = pd.DataFrame({"BTC": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]}, index=dates)
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+        freq_rule="1D",
+        trading_days_year=365,
+        risk_free_rate=0.0,
+    )
+
+    artifacts = result.artifacts
+    assert artifacts.returns is result.metrics.attrs["returns"]
+    assert artifacts.equity is result.metrics.attrs["equity"]
+    assert artifacts.drawdown_pct is result.metrics.attrs["drawdown_pct"]
+    assert artifacts.rolling_sharpe(30) is result.metrics.attrs["rolling_sharpe_30"]
+    assert artifacts.signal.weight_forward is result.metrics.attrs["weight_forward"]
+
+    # Case: metrics_artifacts provides the same access from the metrics table.
+    artifacts_from_metrics = metrics_artifacts(result.metrics)
+    assert artifacts_from_metrics.returns is artifacts.returns
+    assert artifacts_from_metrics.signal.weight_forward is artifacts.signal.weight_forward

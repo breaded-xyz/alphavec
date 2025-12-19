@@ -11,7 +11,7 @@ from .search import (
     Metrics,
     grid_search,
 )
-from .metrics import TEARSHEET_NOTES
+from .metrics import MetricsArtifacts, TEARSHEET_NOTES, metrics_artifacts
 from .tearsheet import tearsheet
 
 try:
@@ -26,6 +26,8 @@ __all__ = [
     "MarketData",
     "SimConfig",
     "TEARSHEET_NOTES",
+    "MetricsArtifacts",
+    "metrics_artifacts",
     "grid_search",
     "GridSearchBest",
     "GridSearchResults",

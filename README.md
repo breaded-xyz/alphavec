@@ -109,8 +109,7 @@ result = simulate(
 html_str = tearsheet(
     sim_result=result,
     output_path="tearsheet.html",
-    signal_smooth_window=30,
-    rolling_sharpe_window=30,
+    smooth_periods=30,
 )
 ```
 
@@ -181,8 +180,32 @@ results.plot()         # Smart plot: line for 1D, heatmap for 2D
 
 Some richer time series / grouped diagnostics are attached as `metrics.attrs[...]` for use in the tearsheet:
 
+- `result.artifacts` exposes typed access to the same artifacts (for autocomplete/discoverability)
+- `metrics_artifacts(result.metrics)` provides the same access when you only have the metrics table
+
+Example:
+
+```python
+art = result.artifacts
+equity = art.equity
+drawdown = art.drawdown_pct
+rolling_sharpe = art.rolling_sharpe(30)
+signal_ic = art.signal.weight_forward
+```
+
+- `metrics.attrs["returns"]`: per-period returns (Series)
+- `metrics.attrs["returns_pct"]`: per-period returns in percent (Series)
 - `metrics.attrs["equity"]`: equity curve (Series)
+- `metrics.attrs["equity_pct"]`: equity curve as cumulative return percent (Series)
+- `metrics.attrs["drawdown_pct"]`: drawdown series in percent (Series)
+- `metrics.attrs["rolling_sharpe_30"]`: 30-period rolling Sharpe (annualized, Series)
 - `metrics.attrs["benchmark_equity"]`: benchmark equity curve when `benchmark_asset` is provided (Series)
+- `metrics.attrs["benchmark_equity_pct"]`: benchmark equity as cumulative return percent (Series)
+- `metrics.attrs["transaction_costs"]`: per-period transaction costs as a fraction of equity (Series)
+- `metrics.attrs["n_positions"]`: per-period active positions (Series)
+- `metrics.attrs["net_exposure"]`: per-period net exposure ratio (Series)
+- `metrics.attrs["gross_exposure"]`: per-period gross exposure ratio (Series)
+- `metrics.attrs["concentration"]`: per-period position concentration (Herfindahl index, Series)
 - `metrics.attrs["weight_forward"]`: per-period signal diagnostics vs next returns (DataFrame), including:
   - `ic`, `rank_ic`
   - `top_bottom_spread`
@@ -195,6 +218,10 @@ Some richer time series / grouped diagnostics are attached as `metrics.attrs[...
   - `total_per_gross_*`, `selection_per_gross_*`, `directional_per_gross_*`
 
 `n` is the number of (asset, timestamp) observations that fell into that decile with a non-zero weight and a finite next-period return.
+
+Smoothing in the tearsheet is applied at render time only; the underlying per-period series remain available in `metrics.attrs`.
+
+The rolling Sharpe series used in the tearsheet is stored as `metrics.attrs["rolling_sharpe_N"]` (N defaults to 30 when no smoothing is applied).
 
 ### Statistical Methodology
 
@@ -216,7 +243,7 @@ The built-in `tearsheet()` renderer produces a self-contained HTML report (stati
 
 - Equity curve (portfolio and optional benchmark)
 - Drawdown
-- Rolling Sharpe (configurable via `rolling_sharpe_window`, default `30`)
+- Rolling Sharpe (annualized, default 30 periods; uses `smooth_periods` when > 0)
 - Returns distribution
 - Signal diagnostics (when available): directionality and IC/rank-IC vs next-period return scatters with linear fits, alpha decay by lag (total/selection/directional), and decile charts (mean/median, long/short contribution)
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .metrics import _metrics
+from .metrics import MetricsArtifacts, _annualization_factor, _metrics
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,8 @@ class _RunOutputs:
 class SimulationResult:
     """
     Result object returned by `simulate()`.
+
+    Use `artifacts` for typed access to series stored in `metrics.attrs`.
     """
 
     returns: pd.Series
@@ -54,30 +56,16 @@ class SimulationResult:
         bench = self.metrics.attrs.get("benchmark_equity")
         return bench if isinstance(bench, pd.Series) else None
 
+    @property
+    def artifacts(self) -> MetricsArtifacts:
+        return MetricsArtifacts(self.metrics.attrs)
+
     def metric_value(self, metric: str, *, default: object = None) -> object:
         try:
             v = self.metrics.loc[metric, "Value"]
         except Exception:
             return default
         return default if pd.isna(v) else v
-
-    def tearsheet(
-        self,
-        *,
-        grid_results=None,
-        output_path=None,
-        signal_smooth_window: int = 30,
-        rolling_sharpe_window: int = 30,
-    ) -> str:
-        from .tearsheet import tearsheet
-
-        return tearsheet(
-            sim_result=self,
-            grid_results=grid_results,
-            output_path=output_path,
-            signal_smooth_window=signal_smooth_window,
-            rolling_sharpe_window=rolling_sharpe_window,
-        )
 
 
 @dataclass(frozen=True)
@@ -368,10 +356,15 @@ def simulate(
           Extra artifacts are attached via `metrics.attrs`, including:
 
           - `metrics.attrs["returns"]`: The returned `returns` series.
+          - `metrics.attrs["returns_pct"]`: Per-period returns in percent.
           - `metrics.attrs["equity"]`: The simulated equity curve (same index as `returns`).
+          - `metrics.attrs["equity_pct"]`: Equity curve as cumulative return percent.
+          - `metrics.attrs["drawdown_pct"]`: Drawdown series in percent.
+          - `metrics.attrs["rolling_sharpe_30"]`: 30-period rolling Sharpe (annualized).
           - `metrics.attrs["init_cash"]`: The initial cash used for the simulation.
           - `metrics.attrs["benchmark_equity"]`: Benchmark equity curve (only when
             `benchmark_asset` is provided and present in `close_prices`).
+          - `metrics.attrs["benchmark_equity_pct"]`: Benchmark equity as cumulative return percent.
 
     Raises:
         ValueError: If inputs are not properly aligned or do not meet validation requirements.
@@ -423,16 +416,39 @@ def simulate(
     )
 
     metrics.attrs["returns"] = returns
+    metrics.attrs["returns_pct"] = (returns * 100.0).rename("returns_pct")
     metrics.attrs["equity"] = equity_series
+    metrics.attrs["equity_pct"] = (
+        (equity_series / float(cfg.init_cash) - 1.0).mul(100.0).rename("equity_pct")
+    )
+    metrics.attrs["drawdown_pct"] = (
+        equity_series.div(equity_series.cummax()).sub(1.0).mul(100.0).rename("drawdown_pct")
+    )
     metrics.attrs["init_cash"] = float(cfg.init_cash)
+
+    annual_factor = float(_annualization_factor(cfg.freq_rule, cfg.trading_days_year))
+    annual_factor = annual_factor if np.isfinite(annual_factor) and annual_factor > 0 else 1.0
+    rf_per_period = (1.0 + cfg.risk_free_rate) ** (1.0 / annual_factor) - 1.0
+    excess = returns - rf_per_period
+    rolling_window = 30
+    min_periods = min(max(2, rolling_window // 5), rolling_window)
+    roll_mean = excess.rolling(window=rolling_window, min_periods=min_periods).mean()
+    roll_std = excess.rolling(window=rolling_window, min_periods=min_periods).std(ddof=1)
+    rolling_sharpe = (roll_mean / roll_std) * np.sqrt(annual_factor)
+    metrics.attrs["rolling_sharpe_30"] = rolling_sharpe.rename("rolling_sharpe_30")
 
     if cfg.benchmark_asset is not None and cfg.benchmark_asset in inputs.close_prices.columns:
         bench_prices = inputs.close_prices[cfg.benchmark_asset].copy().ffill().bfill()
         if bench_prices.notna().any():
             first = float(bench_prices.iloc[0])
             if np.isfinite(first) and first != 0.0:
-                metrics.attrs["benchmark_equity"] = (cfg.init_cash * bench_prices / first).rename(
-                    "benchmark_equity"
+                benchmark_equity = (cfg.init_cash * bench_prices / first).rename("benchmark_equity")
+                metrics.attrs["benchmark_equity"] = benchmark_equity
+                metrics.attrs["benchmark_equity_pct"] = (
+                    benchmark_equity.div(float(cfg.init_cash))
+                    .sub(1.0)
+                    .mul(100.0)
+                    .rename("benchmark_equity_pct")
                 )
 
     return SimulationResult(returns=returns, metrics=metrics)
