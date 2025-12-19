@@ -218,7 +218,7 @@ The built-in `tearsheet()` renderer produces a self-contained HTML report (stati
 - Drawdown
 - Rolling Sharpe (configurable via `rolling_sharpe_window`, default `30`)
 - Returns distribution
-- Signal diagnostics (when available): directionality and IC/rank-IC vs next-period return scatters with linear fits, alpha decay by lag (total/selection/directional), and decile charts (mean/median/Sharpe) with per-decile `n` shown on the x-axis
+- Signal diagnostics (when available): directionality and IC/rank-IC vs next-period return scatters with linear fits, alpha decay by lag (total/selection/directional), and decile charts (mean/median, long/short contribution)
 
 ## Tearsheet Example
 

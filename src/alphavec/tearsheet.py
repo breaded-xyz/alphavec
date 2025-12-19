@@ -75,7 +75,8 @@ def tearsheet(
     Render a self-contained HTML tearsheet (no JS) from metrics and returns.
 
     The report includes performance charts and (when available) signal diagnostics such as
-    signal-vs-return scatters, decile curves, and alpha decay by lag vs next-period returns.
+    signal-vs-return scatters, decile return/contribution charts, and alpha decay by lag vs
+    next-period returns.
 
     Args:
         sim_result: Optional `SimulationResult` from `simulate()`. If omitted and `grid_results` is
@@ -226,12 +227,12 @@ def tearsheet(
     fig, ax = plt.subplots(figsize=(10, 3.5))
     ax.plot(rolling_sharpe.index, rolling_sharpe.values, color="#1f77b4")
     ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-    ax.set_title(f"Rolling Sharpe ({rolling_sharpe_window} periods)")
+    ax.set_title(f"Rolling Sharpe ({rolling_sharpe_window} periods, annualized)")
     ax.set_xlabel("Date")
-    ax.set_ylabel("Sharpe")
+    ax.set_ylabel("Sharpe (annualized)")
     plots_html.append(
         _plot_block(
-            title=f"Rolling Sharpe ({rolling_sharpe_window} periods)",
+            title=f"Rolling Sharpe ({rolling_sharpe_window} periods, annualized)",
             fig=fig,
             note=(
                 f"Rolling {rolling_sharpe_window}-period Sharpe ratio (annualized), computed from per-period excess returns.",
@@ -250,12 +251,12 @@ def tearsheet(
 
     fig, ax = plt.subplots(figsize=(10, 3.5))
     ax.hist(returns_clean.values, bins=60, color="#1f77b4", alpha=0.8)
-    ax.set_title(f"Returns Distribution (%) | Skew: {skew_val:.2f}, Kurtosis: {kurt_val:.2f}")
+    ax.set_title(f"Returns Distribution (Per-Period, %) | Skew: {skew_val:.2f}, Kurtosis: {kurt_val:.2f}")
     ax.set_xlabel("Return (%)")
     ax.set_ylabel("Count")
     plots_html.append(
         _plot_block(
-            title="Returns Distribution (%)",
+            title="Returns Distribution (Per-Period, %)",
             fig=fig,
             note=(
                 "Histogram of period returns (%) with skewness and excess kurtosis. Skew > 0 indicates a right tail; kurtosis > 0 indicates fat tails.",
@@ -267,7 +268,7 @@ def tearsheet(
     # Q-Q plot
     fig, ax = plt.subplots(figsize=(10, 3.5))
     stats.probplot(returns_clean, dist="norm", plot=ax)
-    ax.set_title("Returns Q-Q Plot (vs Normal Distribution)")
+    ax.set_title("Returns Q-Q Plot (Normal, per-period)")
     ax.grid(True, alpha=0.3)
     plots_html.append(
         _plot_block(
@@ -290,13 +291,17 @@ def tearsheet(
         costs_plot = _smooth(costs_pct, smooth_window)
         fig, ax = plt.subplots(figsize=(10, 3.5))
         ax.plot(costs_plot.index, costs_plot.values, color="#d62728", linewidth=2)
-        title = f"Transaction Costs (%) - {smooth_window}p smooth" if smooth_window > 0 else "Transaction Costs (%)"
+        title = (
+            f"Transaction Costs (% of Portfolio) - {smooth_window}p smooth"
+            if smooth_window > 0
+            else "Transaction Costs (% of Portfolio)"
+        )
         ax.set_title(title)
         ax.set_xlabel("Date")
-        ax.set_ylabel("Transaction cost (% of portfolio)")
+        ax.set_ylabel("Transaction costs (% of portfolio)")
         trading_blocks.append(
             _plot_block(
-                title="Transaction Costs (%)",
+                title="Transaction Costs (% of Portfolio)",
                 fig=fig,
                 note=(
                     "Transaction costs per period as a percentage of portfolio value.",
@@ -311,13 +316,17 @@ def tearsheet(
         n_positions_plot = _smooth(n_positions, smooth_window)
         fig, ax = plt.subplots(figsize=(10, 3.5))
         ax.plot(n_positions_plot.index, n_positions_plot.values, color="#9467bd", linewidth=2)
-        title = f"Number of Active Positions - {smooth_window}p smooth" if smooth_window > 0 else "Number of Active Positions"
+        title = (
+            f"Active Positions (Count) - {smooth_window}p smooth"
+            if smooth_window > 0
+            else "Active Positions (Count)"
+        )
         ax.set_title(title)
         ax.set_xlabel("Date")
-        ax.set_ylabel("Position count")
+        ax.set_ylabel("Count")
         trading_blocks.append(
             _plot_block(
-                title="Number of Active Positions",
+                title="Active Positions (Count)",
                 fig=fig,
                 note=(
                     "Number of positions with non-zero weight over time.",
@@ -349,50 +358,22 @@ def tearsheet(
             net_plot = _smooth(net_pct, smooth_window)
             ax.plot(net_plot.index, net_plot.values, label="Net Exposure", linewidth=2, color="#ff7f0e")
         ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-        title = f"Net and Gross Exposure (%) - {smooth_window}p smooth" if smooth_window > 0 else "Net and Gross Exposure (%)"
+        title = (
+            f"Net and Gross Exposure (% of Portfolio) - {smooth_window}p smooth"
+            if smooth_window > 0
+            else "Net and Gross Exposure (% of Portfolio)"
+        )
         ax.set_title(title)
         ax.set_xlabel("Date")
         ax.set_ylabel("Exposure (% of portfolio)")
         ax.legend(loc="best")
         exposure_blocks.append(
             _plot_block(
-                title="Net and Gross Exposure (%)",
+                title="Net and Gross Exposure (% of Portfolio)",
                 fig=fig,
                 note=(
                     "Net exposure (long − short) and gross exposure (|long| + |short|) as % of portfolio value.",
                     "Net shows directional bias; gross shows leverage. Stable exposure suggests consistent positioning; shifts may indicate regime changes.",
-                ),
-            )
-        )
-
-    # Long and Short Exposure separately
-    long_exposure = metrics.attrs.get("long_exposure")
-    short_exposure = metrics.attrs.get("short_exposure")
-    if (isinstance(long_exposure, pd.Series) and len(long_exposure) > 0) or (
-        isinstance(short_exposure, pd.Series) and len(short_exposure) > 0
-    ):
-        fig, ax = plt.subplots(figsize=(10, 3.5))
-        if isinstance(long_exposure, pd.Series) and len(long_exposure) > 0:
-            long_pct = long_exposure * 100.0
-            long_plot = _smooth(long_pct, smooth_window)
-            ax.fill_between(long_plot.index, 0, long_plot.values, label="Long Exposure", alpha=0.6, color="#2ca02c")
-        if isinstance(short_exposure, pd.Series) and len(short_exposure) > 0:
-            short_pct = short_exposure * 100.0
-            short_plot = _smooth(short_pct, smooth_window)
-            ax.fill_between(short_plot.index, 0, short_plot.values, label="Short Exposure", alpha=0.6, color="#d62728")
-        ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-        title = f"Long and Short Exposure (%) - {smooth_window}p smooth" if smooth_window > 0 else "Long and Short Exposure (%)"
-        ax.set_title(title)
-        ax.set_xlabel("Date")
-        ax.set_ylabel("Exposure (% of portfolio)")
-        ax.legend(loc="best")
-        exposure_blocks.append(
-            _plot_block(
-                title="Long and Short Exposure (%)",
-                fig=fig,
-                note=(
-                    "Long and short exposure separately as % of portfolio value (long positive, short negative).",
-                    "Imbalances indicate directional bias; changes in magnitude show leverage adjustments or risk management actions.",
                 ),
             )
         )
@@ -403,13 +384,17 @@ def tearsheet(
         concentration_plot = _smooth(concentration, smooth_window)
         fig, ax = plt.subplots(figsize=(10, 3.5))
         ax.plot(concentration_plot.index, concentration_plot.values, color="#8c564b", linewidth=2)
-        title = f"Position Concentration (Herfindahl Index) - {smooth_window}p smooth" if smooth_window > 0 else "Position Concentration (Herfindahl Index)"
+        title = (
+            f"Position Concentration (Herfindahl Index) - {smooth_window}p smooth"
+            if smooth_window > 0
+            else "Position Concentration (Herfindahl Index)"
+        )
         ax.set_title(title)
         ax.set_xlabel("Date")
-        ax.set_ylabel("Concentration")
+        ax.set_ylabel("Herfindahl index")
         exposure_blocks.append(
             _plot_block(
-                title="Position Concentration",
+                title="Position Concentration (Herfindahl Index)",
                 fig=fig,
                 note=(
                     "Herfindahl index of position weights (sum of squared weights); ranges from 1/N (equal-weighted) to 1 (single position).",
@@ -448,15 +433,15 @@ def tearsheet(
                     )
                     ax.legend(loc="best")
                 ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-                ax.set_title("Signal vs Next-Period Return (Per Gross)")
-                ax.set_xlabel("Signal directionality (net / gross)")
+                ax.set_title("Signal Directionality vs Next-Period Return (Per Gross)")
+                ax.set_xlabel("Directionality (net / gross)")
                 ax.set_ylabel("Next-period return per gross (%)")
                 signal_blocks.append(
                     _plot_block(
-                        title="Signal vs Next-Period Return (Per Gross)",
+                        title="Signal Directionality vs Next-Period Return (Per Gross)",
                         fig=fig,
                         note=(
-                            "Scatter of per-period signal directionality (net/gross) versus next-period return per gross (%).",
+                            "Scatter of per-period directionality (net/gross) versus next-period return per gross (%).",
                             "An upward slope suggests directional tilt aligns with next-period returns; a flat fit suggests limited directional edge.",
                         ),
                     )
@@ -524,13 +509,13 @@ def tearsheet(
             ax.plot(x, y, marker="o", linewidth=2, label=label)
 
         ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-        ax.set_title("Signal: Alpha Decay by Lag (Next Return, Per Gross)")
+        ax.set_title("Signal: Alpha Decay by Lag (Next-Period Return per Gross)")
         ax.set_xlabel("Lag (periods)")
-        ax.set_ylabel("Mean next return per gross (%)")
+        ax.set_ylabel("Mean next-period return per gross (%)")
         ax.legend(loc="best")
         signal_blocks.append(
             _plot_block(
-                title="Signal: Alpha Decay by Lag (Next Return, Per Gross)",
+                title="Signal: Alpha Decay by Lag (Next-Period Return per Gross)",
                 fig=fig,
                 note=(
                     "Mean next-period return per unit gross weight when acting on the signal with a delay (lag), split into total / selection / directional components.",
@@ -543,93 +528,41 @@ def tearsheet(
     wf_deciles = metrics.attrs.get("weight_forward_deciles")
     wf_deciles_median = metrics.attrs.get("weight_forward_deciles_median")
     wf_deciles_std = metrics.attrs.get("weight_forward_deciles_std")
-    wf_deciles_count = metrics.attrs.get("weight_forward_deciles_count")
-    wf_deciles_contrib = metrics.attrs.get("weight_forward_deciles_contrib")
     wf_deciles_contrib_long = metrics.attrs.get("weight_forward_deciles_contrib_long")
     wf_deciles_contrib_short = metrics.attrs.get("weight_forward_deciles_contrib_short")
-    if isinstance(wf_deciles, pd.Series) and len(wf_deciles.index) > 0:
-        x = wf_deciles.index.astype(int).to_numpy()
-        y = (wf_deciles * 100.0).to_numpy(dtype=float)
+    def _decile_ticks(base_index: pd.Index) -> tuple[np.ndarray, list[str]]:
+        idx = base_index.astype(int)
+        labels = [str(i) for i in idx]
+        return idx.to_numpy(), labels
+    mean_deciles = wf_deciles if isinstance(wf_deciles, pd.Series) and len(wf_deciles.index) > 0 else None
+    median_deciles = (
+        wf_deciles_median
+        if isinstance(wf_deciles_median, pd.Series) and len(wf_deciles_median.index) > 0
+        else None
+    )
+    if mean_deciles is not None or median_deciles is not None:
+        base = mean_deciles if mean_deciles is not None else median_deciles
+        x, labels = _decile_ticks(base.index)
         fig, ax = plt.subplots(figsize=(10, 3.5))
-        ax.bar(x, y, color="#1f77b4", alpha=0.9)
-        ax.set_title("Signal: Mean Next Return by Weight Decile")
+        if mean_deciles is not None:
+            mean_y = (mean_deciles.reindex(base.index) * 100.0).to_numpy(dtype=float)
+            ax.bar(x, mean_y, color="#1f77b4", alpha=0.85, label="Mean")
+        if median_deciles is not None:
+            median_y = (median_deciles.reindex(base.index) * 100.0).to_numpy(dtype=float)
+            ax.scatter(x, median_y, color="#ff7f0e", s=40, label="Median", zorder=3)
+        ax.set_title("Signal: Next-Period Return by Weight Decile (Mean/Median)")
         ax.set_xlabel("Weight decile (active universe)")
-        ax.set_ylabel("Mean next return (%)")
+        ax.set_ylabel("Next-period return (%)")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        ax.legend(loc="best")
         signal_blocks.append(
             _plot_block(
-                title="Signal: Mean Next Return by Weight Decile",
+                title="Signal: Next-Period Return by Weight Decile (Mean/Median)",
                 fig=fig,
                 note=(
-                    "Mean next-period return (%) by weight decile, computed over the active universe (non-zero weights).",
-                    "A healthy signal typically shows monotonic separation (top deciles outperform bottom), and reasonable per-decile sample sizes (n).",
-                ),
-            )
-        )
-
-    if isinstance(wf_deciles_median, pd.Series) and len(wf_deciles_median.index) > 0:
-        x = wf_deciles_median.index.astype(int).to_numpy()
-        y = (wf_deciles_median * 100.0).to_numpy(dtype=float)
-        fig, ax = plt.subplots(figsize=(10, 3.5))
-        ax.bar(x, y, color="#1f77b4", alpha=0.9)
-        ax.set_title("Signal: Median Next Return by Weight Decile")
-        ax.set_xlabel("Weight decile (active universe)")
-        ax.set_ylabel("Median next return (%)")
-        signal_blocks.append(
-            _plot_block(
-                title="Signal: Median Next Return by Weight Decile",
-                fig=fig,
-                note=(
-                    "Median next-period return (%) by weight decile, computed over the active universe (non-zero weights).",
-                    "Less sensitive to outliers than the mean; if mean is strong but median is weak, performance may be outlier-driven.",
-                ),
-            )
-        )
-
-    if (
-        isinstance(wf_deciles, pd.Series)
-        and isinstance(wf_deciles_std, pd.Series)
-        and len(wf_deciles.index) > 0
-        and len(wf_deciles_std.index) > 0
-    ):
-        std = wf_deciles_std.reindex(wf_deciles.index)
-        mean_excess = wf_deciles - rf_per_period
-        sharpe = (mean_excess / std) * np.sqrt(annual_factor)
-        sharpe = sharpe.replace([np.inf, -np.inf], np.nan)
-        x = sharpe.index.astype(int).to_numpy()
-        y = sharpe.to_numpy(dtype=float)
-        fig, ax = plt.subplots(figsize=(10, 3.5))
-        ax.bar(x, y, color="#1f77b4", alpha=0.9)
-        ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-        ax.set_title("Signal: Sharpe by Weight Decile (Annualized)")
-        ax.set_xlabel("Weight decile (active universe)")
-        ax.set_ylabel("Sharpe (annualized)")
-        signal_blocks.append(
-            _plot_block(
-                title="Signal: Sharpe by Weight Decile (Annualized)",
-                fig=fig,
-                note=(
-                    "Annualized Sharpe by decile: mean(next return − risk-free per period) / std(next return), annualized.",
-                    "Higher is better; instability or extreme values often indicate small n or a very noisy decile return series.",
-                ),
-            )
-        )
-
-    if isinstance(wf_deciles_contrib, pd.Series) and len(wf_deciles_contrib.index) > 0:
-        x = wf_deciles_contrib.index.astype(int).to_numpy()
-        y = (wf_deciles_contrib * 100.0).to_numpy(dtype=float)
-        fig, ax = plt.subplots(figsize=(10, 3.5))
-        ax.bar(x, y, color="#1f77b4", alpha=0.9)
-        ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-        ax.set_title("Signal: Mean Next Return Contribution by Weight Decile")
-        ax.set_xlabel("Weight decile (active universe)")
-        ax.set_ylabel("Mean contribution to next return (%)")
-        signal_blocks.append(
-            _plot_block(
-                title="Signal: Mean Next Return Contribution by Weight Decile",
-                fig=fig,
-                note=(
-                    "Mean contribution to next-period portfolio return (%) by weight decile.",
-                    "Shows which deciles drive portfolio PnL; ideally contribution aligns with intended signal shape (e.g., top deciles contribute positively).",
+                    "Mean (bars) and median (dots) next-period return (%) by weight decile, computed over the active universe (non-zero weights).",
+                    "Monotonic separation suggests signal strength; mean >> median implies outlier-driven performance.",
                 ),
             )
         )
@@ -642,24 +575,27 @@ def tearsheet(
     ):
         long_c = wf_deciles_contrib_long
         short_c = wf_deciles_contrib_short.reindex(long_c.index)
-        x = long_c.index.astype(int).to_numpy()
+        x, labels = _decile_ticks(long_c.index)
         long_y = (long_c * 100.0).to_numpy(dtype=float)
         short_y = (short_c * 100.0).to_numpy(dtype=float)
+        width = 0.36
         fig, ax = plt.subplots(figsize=(10, 3.5))
-        ax.bar(x, long_y, label="Long contribution (%)", color="#1f77b4", alpha=0.9)
-        ax.bar(x, short_y, bottom=long_y, label="Short contribution (%)", color="#ff7f0e", alpha=0.9)
+        ax.bar(x - width / 2, long_y, width=width, label="Long contribution", color="#1f77b4", alpha=0.9)
+        ax.bar(x + width / 2, short_y, width=width, label="Short contribution", color="#ff7f0e", alpha=0.9)
         ax.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
-        ax.set_title("Signal: Mean Contribution by Weight Decile (Long and Short)")
+        ax.set_title("Signal: Next-Period Return Contribution by Weight Decile (Long/Short)")
         ax.set_xlabel("Weight decile (active universe)")
-        ax.set_ylabel("Mean contribution to next return (%)")
+        ax.set_ylabel("Mean next-period return contribution (%)")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
         ax.legend(loc="best")
         signal_blocks.append(
             _plot_block(
-                title="Signal: Mean Contribution by Weight Decile (Long and Short)",
+                title="Signal: Next-Period Return Contribution by Weight Decile (Long/Short)",
                 fig=fig,
                 note=(
                     "Mean next-period return contribution (%) by decile, split into long vs short sides.",
-                    "Helps distinguish selection vs directional effects; large asymmetry can indicate a side-specific edge or unintended bias.",
+                    "Highlights which side drives PnL; large asymmetry can indicate a side-specific edge or unintended bias.",
                 ),
             )
         )
