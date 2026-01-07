@@ -361,6 +361,101 @@ def test_simulate_period_slicing():
     ]
 
 
+def test_simulate_trim_warmup_basic():
+    # Case: trim_warmup slices to first row with finite weights.
+    dates = pd.date_range("2024-01-01", periods=6, freq="1D")
+    close_prices = pd.DataFrame(
+        {"BTC": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]},
+        index=dates,
+    )
+    exec_prices = close_prices.copy()
+    # First 2 rows are NaN (warm-up period)
+    weights = pd.DataFrame(
+        {"BTC": [np.nan, np.nan, 1.0, 1.0, 1.0, 1.0]},
+        index=dates,
+    )
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+        trim_warmup=True,
+    )
+
+    # Result should start at 2024-01-03 (index 2), the first non-NaN row
+    assert result.returns.index[0] == pd.Timestamp("2024-01-03")
+    assert len(result.returns) == 4
+
+
+def test_simulate_trim_warmup_with_later_start_period():
+    # Case: start_period is later than warmup end, so start_period wins.
+    dates = pd.date_range("2024-01-01", periods=6, freq="1D")
+    close_prices = pd.DataFrame(
+        {"BTC": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]},
+        index=dates,
+    )
+    exec_prices = close_prices.copy()
+    # First 2 rows are NaN (warm-up ends at index 2 = 2024-01-03)
+    weights = pd.DataFrame(
+        {"BTC": [np.nan, np.nan, 1.0, 1.0, 1.0, 1.0]},
+        index=dates,
+    )
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+        trim_warmup=True,
+        start_period="2024-01-04",  # Later than warmup end
+    )
+
+    # start_period is later, so it takes precedence
+    assert result.returns.index[0] == pd.Timestamp("2024-01-04")
+    assert len(result.returns) == 3
+
+
+def test_simulate_trim_warmup_with_earlier_start_period():
+    # Case: start_period is earlier than warmup end, so warmup end wins.
+    dates = pd.date_range("2024-01-01", periods=6, freq="1D")
+    close_prices = pd.DataFrame(
+        {"BTC": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]},
+        index=dates,
+    )
+    exec_prices = close_prices.copy()
+    # First 2 rows are NaN (warm-up ends at index 2 = 2024-01-03)
+    weights = pd.DataFrame(
+        {"BTC": [np.nan, np.nan, 1.0, 1.0, 1.0, 1.0]},
+        index=dates,
+    )
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+        trim_warmup=True,
+        start_period="2024-01-02",  # Earlier than warmup end
+    )
+
+    # warmup end (2024-01-03) is later, so it takes precedence
+    assert result.returns.index[0] == pd.Timestamp("2024-01-03")
+    assert len(result.returns) == 4
+
+
 def test_simulate_order_notional_min_skips_small_rebalance():
     # Case: Small rebalance below min notional is skipped.
     dates = pd.date_range("2024-01-01", periods=3, freq="1D")

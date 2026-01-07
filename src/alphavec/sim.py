@@ -5,6 +5,7 @@ Vector-based backtest simulation for perpetual futures strategies.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -84,6 +85,7 @@ class SimConfig:
     slippage_rate: float = 0.0
     start_period: str | int | None = None
     end_period: str | int | None = None
+    trim_warmup: bool = False
     freq_rule: str = "1D"
     trading_days_year: int = 365
     risk_free_rate: float = 0.0
@@ -161,6 +163,16 @@ def _normalize_inputs(
     fr = fr.astype(float)
 
     return _Inputs(weights=w, close_prices=cp, exec_prices=ep, funding_rates=fr)
+
+
+def _find_first_valid_weights_index(weights: pd.DataFrame | pd.Series) -> Any | None:
+    """Return the index label of the first row with at least one finite value."""
+    w = weights.to_frame() if isinstance(weights, pd.Series) else weights
+    valid_mask = w.notna() & np.isfinite(w)
+    has_valid = valid_mask.any(axis=1)
+    if not has_valid.any():
+        return None
+    return has_valid.idxmax()
 
 
 def _slice_inputs_by_period(
@@ -417,12 +429,32 @@ def simulate(
 
     cfg = config or SimConfig()
 
+    effective_start = cfg.start_period
+
+    if cfg.trim_warmup:
+        warmup_end_label = _find_first_valid_weights_index(weights)
+        if warmup_end_label is None:
+            raise ValueError("trim_warmup enabled but weights has no finite values")
+
+        warmup_pos = cast(int, weights.index.get_loc(warmup_end_label))
+
+        if effective_start is None:
+            # Use positional index for consistency with iloc slicing
+            effective_start = warmup_pos
+        elif isinstance(effective_start, int):
+            effective_start = max(effective_start, warmup_pos)
+        else:
+            # String start_period: compare positions, keep type as string
+            start_pos = cast(int, weights.index.get_loc(effective_start))
+            if warmup_pos > start_pos:
+                effective_start = str(warmup_end_label)
+
     weights, close_prices, exec_prices, funding_rates = _slice_inputs_by_period(
         weights=weights,
         close_prices=market.close_prices,
         exec_prices=market.exec_prices,
         funding_rates=market.funding_rates,
-        start_period=cfg.start_period,
+        start_period=effective_start,
         end_period=cfg.end_period,
     )
 
