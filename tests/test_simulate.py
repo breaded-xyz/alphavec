@@ -456,6 +456,167 @@ def test_simulate_trim_warmup_with_earlier_start_period():
     assert len(result.returns) == 4
 
 
+def test_simulate_period_slicing_tz_aware_index():
+    # Case: Datetime string slicing works with timezone-aware DatetimeIndex.
+    dates = pd.date_range("2024-01-01", periods=6, freq="1D", tz="UTC")
+    close_prices = pd.DataFrame(
+        {"BTC": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]},
+        index=dates,
+    )
+    exec_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
+    weights = pd.DataFrame({"BTC": [1.0] * len(dates)}, index=dates)
+
+    config = {
+        "init_cash": 1000.0,
+        "fee_rate": 0.0,
+        "slippage_rate": 0.0,
+        "order_notional_min": 0.0,
+        "freq_rule": "1D",
+        "trading_days_year": 365,
+        "risk_free_rate": 0.0,
+    }
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        start_period="2024-01-02",
+        end_period="2024-01-05",
+        **config,
+    )
+
+    # Should slice correctly despite tz-aware index
+    assert result.returns.index[0] == pd.Timestamp("2024-01-02", tz="UTC")
+    assert result.returns.index[-1] == pd.Timestamp("2024-01-05", tz="UTC")
+    assert len(result.returns) == 4
+
+
+def test_simulate_period_slicing_start_not_in_index():
+    # Case: start_period date not in index uses nearest available date.
+    # Create index with gaps (missing 2024-01-02)
+    dates = pd.DatetimeIndex(
+        [
+            "2024-01-01",
+            "2024-01-03",
+            "2024-01-04",
+            "2024-01-05",
+            "2024-01-06",
+        ],
+        tz="UTC",
+    )
+    close_prices = pd.DataFrame(
+        {"BTC": [100.0, 102.0, 103.0, 104.0, 105.0]},
+        index=dates,
+    )
+    exec_prices = close_prices.copy()
+    weights = pd.DataFrame({"BTC": [1.0] * len(dates)}, index=dates)
+
+    config = {
+        "init_cash": 1000.0,
+        "fee_rate": 0.0,
+        "slippage_rate": 0.0,
+        "order_notional_min": 0.0,
+        "freq_rule": "1D",
+        "trading_days_year": 365,
+        "risk_free_rate": 0.0,
+    }
+
+    # start_period="2024-01-02" doesn't exist, should slice from 2024-01-03
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        start_period="2024-01-02",
+        end_period="2024-01-05",
+        **config,
+    )
+
+    # pandas loc slicing with string is inclusive and finds nearest
+    assert result.returns.index[0] == pd.Timestamp("2024-01-03", tz="UTC")
+    assert result.returns.index[-1] == pd.Timestamp("2024-01-05", tz="UTC")
+    assert len(result.returns) == 3
+
+
+def test_simulate_trim_warmup_tz_aware_with_earlier_start():
+    # Case: trim_warmup with tz-aware index and start_period earlier than warmup.
+    # Tests that warmup_end_label is formatted correctly (strftime) for slicing.
+    dates = pd.date_range("2024-01-01", periods=6, freq="1D", tz="UTC")
+    close_prices = pd.DataFrame(
+        {"BTC": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]},
+        index=dates,
+    )
+    exec_prices = close_prices.copy()
+    # First 2 rows are NaN (warm-up ends at index 2 = 2024-01-03)
+    weights = pd.DataFrame(
+        {"BTC": [np.nan, np.nan, 1.0, 1.0, 1.0, 1.0]},
+        index=dates,
+    )
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+        trim_warmup=True,
+        start_period="2024-01-01",  # Earlier than warmup end
+        end_period="2024-01-06",
+    )
+
+    # warmup end (2024-01-03) is later, so it takes precedence
+    assert result.returns.index[0] == pd.Timestamp("2024-01-03", tz="UTC")
+    assert len(result.returns) == 4
+
+
+def test_simulate_trim_warmup_start_not_in_index():
+    # Case: trim_warmup with start_period that doesn't exist in index.
+    # Uses searchsorted to find position for comparison.
+    dates = pd.DatetimeIndex(
+        [
+            "2024-01-01",
+            "2024-01-03",
+            "2024-01-04",
+            "2024-01-05",
+            "2024-01-06",
+        ],
+        tz="UTC",
+    )
+    close_prices = pd.DataFrame(
+        {"BTC": [100.0, 102.0, 103.0, 104.0, 105.0]},
+        index=dates,
+    )
+    exec_prices = close_prices.copy()
+    # First row is NaN (warm-up ends at index 1 = 2024-01-03)
+    weights = pd.DataFrame(
+        {"BTC": [np.nan, 1.0, 1.0, 1.0, 1.0]},
+        index=dates,
+    )
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+        trim_warmup=True,
+        start_period="2024-01-02",  # Doesn't exist in index
+        end_period="2024-01-06",
+    )
+
+    # start_period=2024-01-02 would be at position 1 (between 01-01 and 01-03)
+    # warmup ends at position 1 (2024-01-03), so warmup wins
+    assert result.returns.index[0] == pd.Timestamp("2024-01-03", tz="UTC")
+    assert len(result.returns) == 4
+
+
 def test_simulate_order_notional_min_skips_small_rebalance():
     # Case: Small rebalance below min notional is skipped.
     dates = pd.date_range("2024-01-01", periods=3, freq="1D")

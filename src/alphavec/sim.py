@@ -445,9 +445,15 @@ def simulate(
             effective_start = max(effective_start, warmup_pos)
         else:
             # String start_period: compare positions, keep type as string
-            start_pos = cast(int, weights.index.get_loc(effective_start))
+            # Convert string to timestamp matching index dtype and use searchsorted
+            # to handle cases where exact date doesn't exist in index
+            start_key = pd.Timestamp(effective_start)
+            if hasattr(weights.index, "tz") and weights.index.tz is not None:
+                start_key = start_key.tz_localize(weights.index.tz)
+            start_pos = int(weights.index.searchsorted(start_key, side="left"))
             if warmup_pos > start_pos:
-                effective_start = str(warmup_end_label)
+                # Format as date-only string to match user-provided start_period format
+                effective_start = warmup_end_label.strftime("%Y-%m-%d")
 
     weights, close_prices, exec_prices, funding_rates = _slice_inputs_by_period(
         weights=weights,
