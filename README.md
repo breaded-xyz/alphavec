@@ -163,6 +163,52 @@ results.summary()      # Summary statistics by grid
 results.plot()         # Smart plot: line for 1D, heatmap for 2D
 ```
 
+### Walk-Forward Analysis
+
+`walk_forward()` splits the simulation period into consecutive time-based folds and computes metrics for each fold independently. This helps assess strategy robustness across different market regimes.
+
+See `examples/walk_forward.ipynb`
+
+```python
+from alphavec import walk_forward, FoldConfig, MetricKey, tearsheet
+
+result = walk_forward(
+    weights=weights,
+    market=MarketData(close_prices=close_prices, exec_prices=exec_prices),
+    config=SimConfig(
+        fee_rate=0.00025,
+        slippage_rate=0.001,
+        trim_warmup=True,  # Skip periods with no valid weights before folding
+    ),
+    fold_config=FoldConfig(
+        fold_period="3ME",   # 3-month (quarterly) folds
+        min_periods=30,      # Minimum observations per fold
+        align_start=True,    # Align to calendar boundaries
+    ),
+)
+
+# Aggregated metrics across folds
+agg = result.metric_aggregation(MetricKey.ANNUALIZED_SHARPE)
+print(f"Median Sharpe: {agg.median:.3f}")
+print(f"Mean Sharpe: {agg.mean:.3f}")
+print(f"Std: {agg.std:.3f}")
+
+# Per-fold values
+fold_sharpes = result.fold_metric_values(MetricKey.ANNUALIZED_SHARPE)
+
+# Summary stats table
+result.summary_stats([MetricKey.ANNUALIZED_SHARPE, MetricKey.MAX_DRAWDOWN_EQUITY_PCT])
+
+# Per-fold details
+for fold in result.folds:
+    print(f"Fold {fold.fold_index}: {fold.start_period} to {fold.end_period}")
+    print(f"  Sharpe: {fold.result.metric_value(MetricKey.ANNUALIZED_SHARPE):.2f}")
+
+# Generate tearsheets
+tearsheet(sim_result=result.full_result, output_path="full_tearsheet.html")
+tearsheet(sim_result=result.folds[0].result, output_path="fold_0_tearsheet.html")
+```
+
 ## Metrics
 
 `simulate()` returns a `metrics` DataFrame with `Category`, `Value`, and `Note` columns. Metrics are grouped into categories:
@@ -202,12 +248,16 @@ signal_ic = art.signal.weight_forward
 - `metrics.attrs["equity_pct"]`: equity curve as cumulative return percent (Series)
 - `metrics.attrs["drawdown_pct"]`: drawdown series in percent (Series)
 - `metrics.attrs["rolling_sharpe_30"]`: 30-period rolling Sharpe (annualized, Series)
+- `metrics.attrs["init_cash"]`: initial cash used for the simulation (float)
 - `metrics.attrs["benchmark_equity"]`: benchmark equity curve when `benchmark_asset` is provided (Series)
 - `metrics.attrs["benchmark_equity_pct"]`: benchmark equity as cumulative return percent (Series)
+- `metrics.attrs["turnover"]`: per-period turnover ratio (Series)
 - `metrics.attrs["transaction_costs"]`: per-period transaction costs as a fraction of equity (Series)
 - `metrics.attrs["n_positions"]`: per-period active positions (Series)
 - `metrics.attrs["net_exposure"]`: per-period net exposure ratio (Series)
 - `metrics.attrs["gross_exposure"]`: per-period gross exposure ratio (Series)
+- `metrics.attrs["long_exposure"]`: per-period long exposure ratio (Series)
+- `metrics.attrs["short_exposure"]`: per-period short exposure ratio (Series)
 - `metrics.attrs["concentration"]`: per-period position concentration (Herfindahl index, Series)
 - `metrics.attrs["weight_forward"]`: per-period signal diagnostics vs next returns (DataFrame), including:
   - `ic`, `rank_ic`
@@ -217,6 +267,9 @@ signal_ic = art.signal.weight_forward
 - `metrics.attrs["weight_forward_deciles_median"]`: median next return by weight decile (Series)
 - `metrics.attrs["weight_forward_deciles_std"]`: std dev of next return by weight decile (Series)
 - `metrics.attrs["weight_forward_deciles_count"]`: observation count `n` by weight decile (Series)
+- `metrics.attrs["weight_forward_deciles_contrib"]`: mean contribution by weight decile (Series)
+- `metrics.attrs["weight_forward_deciles_contrib_long"]`: mean long contribution by weight decile (Series)
+- `metrics.attrs["weight_forward_deciles_contrib_short"]`: mean short contribution by weight decile (Series)
 - `metrics.attrs["alpha_decay_next_return_by_type"]`: alpha decay curve as a DataFrame indexed by lag (periods), with mean next return per gross and t-stats for:
   - `total_per_gross_*`, `selection_per_gross_*`, `directional_per_gross_*`
 
