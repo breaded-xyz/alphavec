@@ -11,7 +11,7 @@ from .search import (
     Metrics,
     grid_search,
 )
-from .metrics import MetricKey, MetricsArtifacts, TEARSHEET_NOTES, metrics_artifacts
+from .metrics import MetricKey, MetricsAccessor, MetricsArtifacts, TEARSHEET_NOTES, metrics_artifacts
 from .tearsheet import tearsheet
 from .walk_forward import (
     FoldConfig,
@@ -34,6 +34,7 @@ __all__ = [
     "MarketData",
     "SimConfig",
     "MetricKey",
+    "MetricsAccessor",
     "TEARSHEET_NOTES",
     "MetricsArtifacts",
     "metrics_artifacts",

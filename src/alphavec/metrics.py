@@ -5,10 +5,62 @@ Metrics calculation utilities for alphavec simulations.
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import Final, Protocol, runtime_checkable
 
 import numpy as np
 import pandas as pd
+
+
+@runtime_checkable
+class MetricsAccessor(Protocol):
+    """
+    Protocol for unified metric extraction across result types.
+
+    All result types (SimulationResult, GridSearchResults, WalkForwardResult)
+    implement this protocol for consistent metric access.
+
+    Example:
+        >>> def print_sharpe(result: MetricsAccessor) -> None:
+        ...     sharpe = result.metric_value(MetricKey.ANNUALIZED_SHARPE)
+        ...     print(f"Sharpe: {sharpe}")
+    """
+
+    def metric_value(self, metric: str, *, default: object = None) -> object:
+        """
+        Get the value of a specific metric.
+
+        Args:
+            metric: The metric key (use MetricKey constants for type safety).
+            default: Value to return if metric is not found or is NaN.
+
+        Returns:
+            The metric value, or default if not found.
+        """
+        ...
+
+    def available_metrics(self, category: str | None = None) -> list[str]:
+        """
+        Return available metric keys.
+
+        Args:
+            category: Optional category filter (e.g., "Performance", "Risk").
+
+        Returns:
+            List of metric key strings.
+        """
+        ...
+
+    def metrics_dict(self, category: str | None = None) -> dict[str, object]:
+        """
+        Return metrics as a dictionary.
+
+        Args:
+            category: Optional category filter.
+
+        Returns:
+            Dictionary mapping metric keys to values.
+        """
+        ...
 
 
 class MetricKey:
@@ -16,15 +68,24 @@ class MetricKey:
     Constants for all available metric keys.
 
     Use these constants instead of hardcoding strings when extracting metrics
-    from SimulationResult.metric_value().
+    from any result type that implements `MetricsAccessor` (SimulationResult,
+    GridSearchResults, WalkForwardResult).
 
     Example:
-        >>> result = simulate(weights=weights, market=market)
+        >>> # Works with any MetricsAccessor
         >>> sharpe = result.metric_value(MetricKey.ANNUALIZED_SHARPE)
         >>> max_dd = result.metric_value(MetricKey.MAX_DRAWDOWN_EQUITY_PCT)
+        >>> perf = result.metrics_dict("Performance")
 
-    Metrics are organized by category. Use MetricKey.all_keys() to get all
-    available metric keys, or MetricKey.keys_by_category() to get them grouped.
+    Discovery:
+        >>> MetricKey.all_keys()           # List all metric keys
+        >>> MetricKey.keys_by_category()   # Keys grouped by category
+        >>> result.available_metrics()     # Keys available in result
+        >>> result.available_metrics("Risk")  # Filter by category
+
+    Categories:
+        Meta, Performance, Costs, Exposure, Benchmark, Distribution,
+        Portfolio, Risk, Signal
     """
 
     # --- Meta ---

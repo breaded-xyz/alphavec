@@ -84,6 +84,9 @@ class WalkForwardResult:
     """
     Result object returned by `walk_forward()`.
 
+    Implements the `MetricsAccessor` protocol for unified metric extraction.
+    Metric methods delegate to `full_result` (the combined simulation).
+
     Attributes:
         folds: Tuple of FoldResult objects, one per fold.
         aggregations: Dictionary mapping metric keys to FoldAggregation objects.
@@ -91,22 +94,28 @@ class WalkForwardResult:
         sim_config: The SimConfig used for simulations.
         summary: DataFrame with per-fold metrics (rows=folds, columns=metrics).
         full_result: Optional combined SimulationResult spanning all folds.
+            Set `include_full_result=True` in walk_forward() to enable.
 
-    Example:
-        >>> result = walk_forward(weights=w, market=m, fold_config=FoldConfig("3ME"))
+    Full-Period Metrics (delegates to full_result):
+        >>> result.metric_value(MetricKey.ANNUALIZED_SHARPE)
+        >>> result.available_metrics("Performance")
+        >>> result.metrics_dict("Risk")
+
+        Raises ValueError if full_result is None (include_full_result=False).
+
+    Fold-Level Metrics:
         >>> result.metric_aggregation(MetricKey.ANNUALIZED_SHARPE).median
         >>> result.fold_metric_values(MetricKey.ANNUALIZED_SHARPE)
         >>> result.summary_stats([MetricKey.ANNUALIZED_SHARPE])
 
+    Individual Fold Access:
+        >>> for fold in result.folds:
+        ...     sharpe = fold.result.metric_value(MetricKey.ANNUALIZED_SHARPE)
+
     Generating Tearsheets:
-        Generate a tearsheet for the full simulation period:
-
-            >>> from alphavec import tearsheet
-            >>> tearsheet(sim_result=result.full_result, output_path="full_tearsheet.html")
-
-        Generate a tearsheet for a specific fold:
-
-            >>> tearsheet(sim_result=result.folds[0].result, output_path="fold_0_tearsheet.html")
+        >>> from alphavec import tearsheet
+        >>> tearsheet(sim_result=result.full_result, output_path="full.html")
+        >>> tearsheet(sim_result=result.folds[0].result, output_path="fold_0.html")
     """
 
     folds: tuple[FoldResult, ...]
@@ -153,6 +162,79 @@ class WalkForwardResult:
                     }
                 )
         return pd.DataFrame(rows)
+
+    def metric_value(self, metric: str, *, default: object = None) -> object:
+        """
+        Get metric value from the full-period result.
+
+        Delegates to `self.full_result.metric_value()`.
+
+        Args:
+            metric: The metric key (use MetricKey constants).
+            default: Value to return if metric not found or full_result is None.
+
+        Returns:
+            The metric value from the full-period result, or default if unavailable.
+
+        Raises:
+            ValueError: If full_result is None (include_full_result=False) and no default.
+
+        Note:
+            For fold-level metrics, use `metric_aggregation()` or `fold_metric_values()`.
+        """
+        if self.full_result is None:
+            if default is not None:
+                return default
+            raise ValueError(
+                "Cannot access full-period metrics: full_result is None. "
+                "Set include_full_result=True in walk_forward() to enable this. "
+                "For fold-level metrics, use metric_aggregation() or fold_metric_values()."
+            )
+        return self.full_result.metric_value(metric, default=default)
+
+    def available_metrics(self, category: str | None = None) -> list[str]:
+        """
+        Return available metric keys from the full-period result.
+
+        Delegates to `self.full_result.available_metrics()`.
+
+        Args:
+            category: Optional category filter.
+
+        Returns:
+            List of metric keys available in the full-period result.
+
+        Raises:
+            ValueError: If full_result is None (include_full_result=False).
+        """
+        if self.full_result is None:
+            raise ValueError(
+                "Cannot access full-period metrics: full_result is None. "
+                "Set include_full_result=True in walk_forward() to enable this."
+            )
+        return self.full_result.available_metrics(category)
+
+    def metrics_dict(self, category: str | None = None) -> dict[str, object]:
+        """
+        Return metrics dictionary from the full-period result.
+
+        Delegates to `self.full_result.metrics_dict()`.
+
+        Args:
+            category: Optional category filter.
+
+        Returns:
+            Dictionary of metrics from the full-period result.
+
+        Raises:
+            ValueError: If full_result is None (include_full_result=False).
+        """
+        if self.full_result is None:
+            raise ValueError(
+                "Cannot access full-period metrics: full_result is None. "
+                "Set include_full_result=True in walk_forward() to enable this."
+            )
+        return self.full_result.metrics_dict(category)
 
 
 DEFAULT_AGGREGATE_METRICS: list[str] = [

@@ -106,6 +106,30 @@ class GridSearchBest:
 class GridSearchResults:
     """
     Consolidated results from `grid_search`.
+
+    Implements the `MetricsAccessor` protocol for unified metric extraction.
+    Metric methods delegate to the best result's SimulationResult.
+
+    Attributes:
+        table: DataFrame with results for every parameter combination tested.
+        param_grids: Internal grid representations.
+        objective_metric: The metric being optimized.
+        best: The best-scoring result with full SimulationResult, or None if
+            all runs produced NaN/inf objective values.
+
+    Metric Access (delegates to best.result):
+        >>> results.metric_value(MetricKey.ANNUALIZED_SHARPE)
+        >>> results.available_metrics("Performance")
+        >>> results.metrics_dict("Risk")
+
+        Raises ValueError if best is None (no valid results).
+
+    Analysis Methods:
+        >>> results.table          # Full results DataFrame
+        >>> results.best.params    # Best parameters
+        >>> results.top(5)         # Top 5 parameter combinations
+        >>> results.summary()      # Summary statistics by grid
+        >>> results.plot()         # Line for 1D, heatmap for 2D
     """
 
     table: pd.DataFrame
@@ -228,6 +252,75 @@ class GridSearchResults:
             return fig
         else:  # 2D grid
             return self.heatmap_figure(grid_index=grid_index, title=title, **kwargs)
+
+    def metric_value(self, metric: str, *, default: object = None) -> object:
+        """
+        Get metric value from the best result.
+
+        Delegates to `self.best.result.metric_value()`.
+
+        Args:
+            metric: The metric key (use MetricKey constants).
+            default: Value to return if metric not found or best is None.
+
+        Returns:
+            The metric value from the best result, or default if unavailable.
+
+        Raises:
+            ValueError: If no valid results exist (best is None) and no default provided.
+        """
+        if self.best is None:
+            if default is not None:
+                return default
+            raise ValueError(
+                "Cannot access metrics: no valid results exist (best is None). "
+                "This occurs when all grid search runs produced NaN/inf objective values."
+            )
+        return self.best.result.metric_value(metric, default=default)
+
+    def available_metrics(self, category: str | None = None) -> list[str]:
+        """
+        Return available metric keys from the best result.
+
+        Delegates to `self.best.result.available_metrics()`.
+
+        Args:
+            category: Optional category filter.
+
+        Returns:
+            List of metric keys available in the best result.
+
+        Raises:
+            ValueError: If no valid results exist (best is None).
+        """
+        if self.best is None:
+            raise ValueError(
+                "Cannot access metrics: no valid results exist (best is None). "
+                "This occurs when all grid search runs produced NaN/inf objective values."
+            )
+        return self.best.result.available_metrics(category)
+
+    def metrics_dict(self, category: str | None = None) -> dict[str, object]:
+        """
+        Return metrics dictionary from the best result.
+
+        Delegates to `self.best.result.metrics_dict()`.
+
+        Args:
+            category: Optional category filter.
+
+        Returns:
+            Dictionary of metrics from the best result.
+
+        Raises:
+            ValueError: If no valid results exist (best is None).
+        """
+        if self.best is None:
+            raise ValueError(
+                "Cannot access metrics: no valid results exist (best is None). "
+                "This occurs when all grid search runs produced NaN/inf objective values."
+            )
+        return self.best.result.metrics_dict(category)
 
 
 def _objective_value(metrics: pd.DataFrame, objective_metric: str | Metrics) -> float:

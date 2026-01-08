@@ -157,10 +157,14 @@ results = grid_search(
 # Access results
 results.table          # Full results DataFrame
 results.best.params    # Best parameters
-results.best.metrics   # Best run's metrics
 results.top(5)         # Top 5 parameter combinations
 results.summary()      # Summary statistics by grid
 results.plot()         # Smart plot: line for 1D, heatmap for 2D
+
+# Extract metrics (unified API)
+results.metric_value(MetricKey.ANNUALIZED_SHARPE)
+results.available_metrics("Performance")
+results.metrics_dict("Risk")
 ```
 
 ### Walk-Forward Analysis
@@ -207,7 +211,53 @@ for fold in result.folds:
 # Generate tearsheets
 tearsheet(sim_result=result.full_result, output_path="full_tearsheet.html")
 tearsheet(sim_result=result.folds[0].result, output_path="fold_0_tearsheet.html")
+
+# Extract metrics (unified API)
+result.metric_value(MetricKey.ANNUALIZED_SHARPE)  # From full_result
+result.available_metrics("Performance")
+result.metrics_dict("Risk")
 ```
+
+### Extracting Metrics (Unified API)
+
+All result types (`SimulationResult`, `GridSearchResults`, `WalkForwardResult`) implement the `MetricsAccessor` protocol, providing a consistent interface for extracting metrics:
+
+```python
+from alphavec import MetricKey, MetricsAccessor
+
+# Works identically across all result types:
+result.metric_value(MetricKey.ANNUALIZED_SHARPE)        # Single metric
+result.metric_value(MetricKey.ALPHA, default=0.0)      # With default for missing
+result.available_metrics()                              # All metric keys
+result.available_metrics("Performance")                 # Filter by category
+result.metrics_dict()                                   # All as dict
+result.metrics_dict("Risk")                             # Filter by category
+```
+
+This unified API eliminates the need for nested access patterns:
+
+```python
+# Before (verbose)
+grid_results.best.result.metric_value(MetricKey.ANNUALIZED_SHARPE)
+wf_result.full_result.metric_value(MetricKey.ANNUALIZED_SHARPE)
+
+# After (concise)
+grid_results.metric_value(MetricKey.ANNUALIZED_SHARPE)
+wf_result.metric_value(MetricKey.ANNUALIZED_SHARPE)
+```
+
+Write generic functions that work with any result type:
+
+```python
+def report_performance(result: MetricsAccessor) -> None:
+    """Works with SimulationResult, GridSearchResults, or WalkForwardResult."""
+    print(f"Sharpe: {result.metric_value(MetricKey.ANNUALIZED_SHARPE):.2f}")
+    print(f"Max DD: {result.metric_value(MetricKey.MAX_DRAWDOWN_EQUITY_PCT):.2f}%")
+    for key, value in result.metrics_dict("Performance").items():
+        print(f"  {key}: {value}")
+```
+
+**Note**: For `GridSearchResults`, metrics delegate to `best.result`. For `WalkForwardResult`, metrics delegate to `full_result` (requires `include_full_result=True`). For fold-level metrics in walk-forward, use `metric_aggregation()` or `fold_metric_values()`.
 
 ## Metrics
 
