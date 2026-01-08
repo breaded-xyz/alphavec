@@ -45,9 +45,11 @@ class MetricKey:
     ANNUALIZED_SHARPE: Final[str] = "Annualized Sharpe"
     MAX_DRAWDOWN_EQUITY_PCT: Final[str] = "Max drawdown (equity) %"
     TOTAL_RETURN_PCT: Final[str] = "Total return %"
+    TOTAL_RETURN: Final[str] = "Total return"
 
     # --- Costs ---
     FUNDING_EARNINGS: Final[str] = "Funding earnings"
+    FUNDING_PCT_TOTAL_RETURN: Final[str] = "Funding % total return"
     FEES: Final[str] = "Fees"
     ANNUAL_TURNOVER: Final[str] = "Annual turnover"
     TOTAL_ORDER_COUNT: Final[str] = "Total order count"
@@ -142,9 +144,11 @@ class MetricKey:
                 cls.ANNUALIZED_SHARPE,
                 cls.MAX_DRAWDOWN_EQUITY_PCT,
                 cls.TOTAL_RETURN_PCT,
+                cls.TOTAL_RETURN,
             ],
             "Costs": [
                 cls.FUNDING_EARNINGS,
+                cls.FUNDING_PCT_TOTAL_RETURN,
                 cls.FEES,
                 cls.ANNUAL_TURNOVER,
                 cls.TOTAL_ORDER_COUNT,
@@ -358,6 +362,7 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Annualized Sharpe": "Annualized excess return divided by annualized volatility (sample statistics). Higher is generally better (rule of thumb: >1 is good, >2 is strong).",
     "Max drawdown (equity) %": "Worst peak-to-trough % decline in equity. Less negative (closer to 0) is generally better.",
     "Total return %": "Ending equity / initial cash minus 1, expressed in percent. Higher is generally better.",
+    "Total return": "Ending equity minus initial cash, expressed in absolute currency. Higher is generally better; this is the net profit or loss.",
     "Funding earnings": "Sum of funding payments (positive means net earned). Higher is generally better; negative values mean funding cost.",
     "Fees": "Sum of trading fees paid. Lower is generally better.",
     "Annual turnover": "Average per-period one-sided turnover annualized (not percent), computed as min(total buys, total sells) / equity before trading. Lower is generally better (less trading/costs), unless the strategy requires frequent rebalancing.",
@@ -386,6 +391,7 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Average holding period": "Average consecutive periods with a non-zero position per asset. Good depends on the strategy; shorter implies more trading, longer implies lower turnover.",
     "Costs % gross pnl": "Fees+slippage as % of gross PnL (before costs). Lower is generally better; near 0 means costs are small relative to edge.",
     "Funding % total pnl": "Funding as % of net PnL. Lower absolute values are generally better; large magnitudes mean funding dominates PnL.",
+    "Funding % total return": "Funding earnings as % of total return. Shows funding's contribution to the net result; values above 100% indicate trading/costs detracted from funding gains; negative values indicate funding costs were offset by trading gains.",
     "Average funding settled": "Average funding payment per period. Positive is generally better; negative means funding paid on average.",
     "Max abs weight": "Maximum absolute target weight across assets/periods. Lower is generally better (less concentration/leverage), given the strategy's intent.",
     "Annualized Sortino": "Annualized excess return divided by annualized downside deviation. Higher is generally better; focuses on downside risk unlike Sharpe which penalizes upside volatility.",
@@ -998,9 +1004,11 @@ def _metrics(
         "Annualized Sharpe": annual_sharpe,
         "Max drawdown (equity) %": dd_equity * 100.0,
         "Total return %": total_return_pct * 100.0,
+        "Total return": net_pnl,
     }
     metrics_costs_and_trading = {
         "Funding earnings": funding_total,
+        "Funding % total return": funding_pct_total_pnl,
         "Fees": total_fees,
         "Annual turnover": annual_turnover,
         "Total order count": total_order_count,

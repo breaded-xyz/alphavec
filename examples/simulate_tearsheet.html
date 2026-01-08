@@ -124,22 +124,28 @@
       <td>Definition: Worst peak-to-trough % decline in equity.<br>Interpretation: Less negative (closer to 0) is generally better.</td>
     </tr>
     <tr>
-      <th>Max drawdown (PnL) %</th>
-      <td>Performance</td>
-      <td>-213.575379</td>
-      <td>Definition: Worst drawdown of cumulative PnL relative to prior PnL peak.<br>Interpretation: Less negative (closer to 0) is generally better.</td>
-    </tr>
-    <tr>
       <th>Total return %</th>
       <td>Performance</td>
       <td>373.578518</td>
       <td>Definition: Ending equity / initial cash minus 1, expressed in percent.<br>Interpretation: Higher is generally better.</td>
     </tr>
     <tr>
+      <th>Total return</th>
+      <td>Performance</td>
+      <td>37357.851763</td>
+      <td>Definition: Ending equity minus initial cash, expressed in absolute currency.<br>Interpretation: Higher is generally better; this is the net profit or loss.</td>
+    </tr>
+    <tr>
       <th>Funding earnings</th>
       <td>Costs</td>
       <td>10.013426</td>
       <td>Definition: Sum of funding payments (positive means net earned).<br>Interpretation: Higher is generally better; negative values mean funding cost.</td>
+    </tr>
+    <tr>
+      <th>Funding % total return</th>
+      <td>Costs</td>
+      <td>0.026804</td>
+      <td>Definition: Funding earnings as % of total return.<br>Interpretation: Shows funding's contribution to the net result; values above 100% indicate trading/costs detracted from funding gains; negative values indicate funding costs were offset by trading gains.</td>
     </tr>
     <tr>
       <th>Fees</th>
@@ -172,12 +178,6 @@
       <td>Definition: Average sum(|positions|) as % of equity.<br>Interpretation: Lower generally means less leverage; values above 100% indicate leveraged exposure.</td>
     </tr>
     <tr>
-      <th>Gross exposure median %</th>
-      <td>Exposure</td>
-      <td>125.958446</td>
-      <td>Definition: Median sum(|positions|) as % of equity.<br>Interpretation: Lower generally means less leverage; values above 100% indicate leveraged exposure.</td>
-    </tr>
-    <tr>
       <th>Gross exposure max %</th>
       <td>Exposure</td>
       <td>400.43439</td>
@@ -188,12 +188,6 @@
       <td>Exposure</td>
       <td>-0.848327</td>
       <td>Definition: Average signed exposure as % of equity.<br>Interpretation: Closer to 0 is generally more market-neutral; positive means net long, negative net short.</td>
-    </tr>
-    <tr>
-      <th>Net exposure median %</th>
-      <td>Exposure</td>
-      <td>-0.132525</td>
-      <td>Definition: Median signed exposure as % of equity.<br>Interpretation: Closer to 0 is generally more market-neutral; positive means net long, negative net short.</td>
     </tr>
     <tr>
       <th>Net exposure max %</th>
@@ -280,18 +274,6 @@
       <td>Definition: Fraction of non-zero return periods that are positive.<br>Interpretation: Higher is generally better.</td>
     </tr>
     <tr>
-      <th>Avg win</th>
-      <td>Distribution</td>
-      <td>0.018113</td>
-      <td>Definition: Mean return of positive-return periods.<br>Interpretation: Higher is generally better.</td>
-    </tr>
-    <tr>
-      <th>Avg loss</th>
-      <td>Distribution</td>
-      <td>-0.015632</td>
-      <td>Definition: Mean return of negative-return periods.<br>Interpretation: Less negative (closer to 0) is generally better.</td>
-    </tr>
-    <tr>
       <th>Profit factor</th>
       <td>Distribution</td>
       <td>1.291312</td>
@@ -340,12 +322,6 @@
       <td>Definition: Maximum absolute target weight across assets/periods.<br>Interpretation: Lower is generally better (less concentration/leverage), given the strategy's intent.</td>
     </tr>
     <tr>
-      <th>Mean abs weight</th>
-      <td>Portfolio</td>
-      <td>0.040634</td>
-      <td>Definition: Mean absolute target weight across assets/periods.<br>Interpretation: Lower is generally better (less aggregate risk), given the strategy's intent.</td>
-    </tr>
-    <tr>
       <th>Annualized Sortino</th>
       <td>Risk</td>
       <td>3.178483</td>
@@ -376,12 +352,6 @@
       <td>Definition: Probability-weighted ratio of gains above threshold vs losses below threshold (uses 0 as threshold).<br>Interpretation: Higher is generally better; values &gt;1 mean gains outweigh losses.</td>
     </tr>
     <tr>
-      <th>Gain-to-Pain Ratio</th>
-      <td>Risk</td>
-      <td>0.127138</td>
-      <td>Definition: Sum of returns divided by sum of absolute returns.<br>Interpretation: Higher is generally better; measures return per unit of total volatility.</td>
-    </tr>
-    <tr>
       <th>Ulcer Index</th>
       <td>Risk</td>
       <td>5.993044</td>
@@ -398,18 +368,6 @@
       <td>Signal</td>
       <td>1.931289</td>
       <td>Definition: t-stat of the time series of per-period weight IC values.<br>Interpretation: Higher absolute values suggest more statistically reliable alignment (not a guarantee).</td>
-    </tr>
-    <tr>
-      <th>Weight Rank IC mean (next)</th>
-      <td>Signal</td>
-      <td>-0.013531</td>
-      <td>Definition: Time-average Spearman-style (rank) IC between weights and next-period asset returns, computed over the active universe (non-zero weights) each period.<br>Interpretation: See definition.</td>
-    </tr>
-    <tr>
-      <th>Weight Rank IC t-stat (next)</th>
-      <td>Signal</td>
-      <td>-1.191637</td>
-      <td>Definition: t-stat of the time series of per-period weight rank IC values.<br>Interpretation: See definition.</td>
     </tr>
     <tr>
       <th>Top-bottom decile spread mean (next)</th>
@@ -452,18 +410,6 @@
       <td>Signal</td>
       <td>2.675715</td>
       <td>Definition: t-stat of the time series of per-period selection-per-gross values.<br>Interpretation: See definition.</td>
-    </tr>
-    <tr>
-      <th>Forward return directional per gross mean (next)</th>
-      <td>Signal</td>
-      <td>0.000231</td>
-      <td>Definition: Average of the directional component (net weight × mean next return of the active universe), normalized by gross weight (next-period).<br>Interpretation: Magnitude near 0 indicates little directional dependence.</td>
-    </tr>
-    <tr>
-      <th>Forward return directional per gross t-stat (next)</th>
-      <td>Signal</td>
-      <td>1.328641</td>
-      <td>Definition: t-stat of the time series of per-period directional-per-gross values.<br>Interpretation: See definition.</td>
     </tr>
     <tr>
       <th>Gross weight mean</th>
