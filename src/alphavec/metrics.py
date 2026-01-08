@@ -11,6 +11,202 @@ import numpy as np
 import pandas as pd
 
 
+class MetricKey:
+    """
+    Constants for all available metric keys.
+
+    Use these constants instead of hardcoding strings when extracting metrics
+    from SimulationResult.metric_value().
+
+    Example:
+        >>> result = simulate(weights=weights, market=market)
+        >>> sharpe = result.metric_value(MetricKey.ANNUALIZED_SHARPE)
+        >>> max_dd = result.metric_value(MetricKey.MAX_DRAWDOWN_EQUITY_PCT)
+
+    Metrics are organized by category. Use MetricKey.all_keys() to get all
+    available metric keys, or MetricKey.keys_by_category() to get them grouped.
+    """
+
+    # --- Meta ---
+    PERIOD_FREQUENCY: Final[str] = "Period frequency"
+    BENCHMARK_ASSET: Final[str] = "Benchmark Asset"
+    FEE_PCT: Final[str] = "Fee %"
+    SLIPPAGE_PCT: Final[str] = "Slippage %"
+    INIT_CASH: Final[str] = "Init Cash"
+    TRADING_DAYS_YEAR: Final[str] = "Trading Days Year"
+    RISK_FREE_RATE: Final[str] = "Risk Free Rate"
+    SIMULATION_START_DATE: Final[str] = "Simulation start date"
+    SIMULATION_END_DATE: Final[str] = "Simulation end date"
+    FIRST_TRANSACTION_DATE: Final[str] = "First transaction date"
+
+    # --- Performance ---
+    ANNUALIZED_RETURN_PCT: Final[str] = "Annualized return %"
+    ANNUALIZED_VOLATILITY: Final[str] = "Annualized volatility"
+    ANNUALIZED_SHARPE: Final[str] = "Annualized Sharpe"
+    MAX_DRAWDOWN_EQUITY_PCT: Final[str] = "Max drawdown (equity) %"
+    TOTAL_RETURN_PCT: Final[str] = "Total return %"
+
+    # --- Costs ---
+    FUNDING_EARNINGS: Final[str] = "Funding earnings"
+    FEES: Final[str] = "Fees"
+    ANNUAL_TURNOVER: Final[str] = "Annual turnover"
+    TOTAL_ORDER_COUNT: Final[str] = "Total order count"
+    AVERAGE_ORDER_NOTIONAL: Final[str] = "Average order notional"
+
+    # --- Exposure ---
+    GROSS_EXPOSURE_MEAN_PCT: Final[str] = "Gross exposure mean %"
+    GROSS_EXPOSURE_MAX_PCT: Final[str] = "Gross exposure max %"
+    NET_EXPOSURE_MEAN_PCT: Final[str] = "Net exposure mean %"
+    NET_EXPOSURE_MAX_PCT: Final[str] = "Net exposure max %"
+
+    # --- Benchmark ---
+    ALPHA: Final[str] = "Alpha"
+    BETA: Final[str] = "Beta"
+    BENCHMARK_ANNUALIZED_RETURN_PCT: Final[str] = "Benchmark annualized return %"
+    ACTIVE_ANNUAL_RETURN_PCT: Final[str] = "Active annual return %"
+    TRACKING_ERROR: Final[str] = "Tracking error"
+    INFORMATION_RATIO: Final[str] = "Information ratio"
+    R2_VS_BENCHMARK: Final[str] = "R2 vs benchmark"
+
+    # --- Distribution ---
+    CALMAR_RATIO: Final[str] = "Calmar ratio"
+    SKEWNESS: Final[str] = "Skewness"
+    KURTOSIS: Final[str] = "Kurtosis"
+    BEST_PERIOD_RETURN: Final[str] = "Best period return"
+    WORST_PERIOD_RETURN: Final[str] = "Worst period return"
+    HIT_RATE: Final[str] = "Hit rate"
+    PROFIT_FACTOR: Final[str] = "Profit factor"
+    MAX_DRAWDOWN_DURATION_PERIODS: Final[str] = "Max drawdown duration (periods)"
+    TIME_TO_RECOVERY_PERIODS: Final[str] = "Time to recovery (periods)"
+
+    # --- Portfolio ---
+    AVERAGE_HOLDING_PERIOD: Final[str] = "Average holding period"
+    COSTS_PCT_GROSS_PNL: Final[str] = "Costs % gross pnl"
+    FUNDING_PCT_TOTAL_PNL: Final[str] = "Funding % total pnl"
+    AVERAGE_FUNDING_SETTLED: Final[str] = "Average funding settled"
+    MAX_ABS_WEIGHT: Final[str] = "Max abs weight"
+
+    # --- Risk ---
+    ANNUALIZED_SORTINO: Final[str] = "Annualized Sortino"
+    DOWNSIDE_DEVIATION: Final[str] = "Downside deviation"
+    VAR_95_PCT: Final[str] = "VaR 95%"
+    CVAR_95_PCT: Final[str] = "CVaR 95%"
+    OMEGA_RATIO: Final[str] = "Omega Ratio"
+    ULCER_INDEX: Final[str] = "Ulcer Index"
+
+    # --- Signal ---
+    WEIGHT_IC_MEAN_NEXT: Final[str] = "Weight IC mean (next)"
+    WEIGHT_IC_TSTAT_NEXT: Final[str] = "Weight IC t-stat (next)"
+    TOP_BOTTOM_DECILE_SPREAD_MEAN_NEXT: Final[str] = "Top-bottom decile spread mean (next)"
+    TOP_BOTTOM_DECILE_SPREAD_TSTAT_NEXT: Final[str] = "Top-bottom decile spread t-stat (next)"
+    WEIGHTED_LONG_HIT_RATE_MEAN_NEXT: Final[str] = "Weighted long hit rate mean (next)"
+    WEIGHTED_SHORT_HIT_RATE_MEAN_NEXT: Final[str] = "Weighted short hit rate mean (next)"
+    FORWARD_RETURN_PER_GROSS_MEAN_NEXT: Final[str] = "Forward return per gross mean (next)"
+    FORWARD_RETURN_SELECTION_PER_GROSS_MEAN_NEXT: Final[str] = (
+        "Forward return selection per gross mean (next)"
+    )
+    FORWARD_RETURN_SELECTION_PER_GROSS_TSTAT_NEXT: Final[str] = (
+        "Forward return selection per gross t-stat (next)"
+    )
+    GROSS_WEIGHT_MEAN: Final[str] = "Gross weight mean"
+    DIRECTIONALITY_MEAN: Final[str] = "Directionality mean"
+
+    @classmethod
+    def all_keys(cls) -> list[str]:
+        """Return a list of all available metric keys."""
+        return [
+            v
+            for k, v in vars(cls).items()
+            if isinstance(v, str) and not k.startswith("_") and k.isupper()
+        ]
+
+    @classmethod
+    def keys_by_category(cls) -> dict[str, list[str]]:
+        """Return metric keys organized by category."""
+        return {
+            "Meta": [
+                cls.PERIOD_FREQUENCY,
+                cls.BENCHMARK_ASSET,
+                cls.FEE_PCT,
+                cls.SLIPPAGE_PCT,
+                cls.INIT_CASH,
+                cls.TRADING_DAYS_YEAR,
+                cls.RISK_FREE_RATE,
+                cls.SIMULATION_START_DATE,
+                cls.SIMULATION_END_DATE,
+                cls.FIRST_TRANSACTION_DATE,
+            ],
+            "Performance": [
+                cls.ANNUALIZED_RETURN_PCT,
+                cls.ANNUALIZED_VOLATILITY,
+                cls.ANNUALIZED_SHARPE,
+                cls.MAX_DRAWDOWN_EQUITY_PCT,
+                cls.TOTAL_RETURN_PCT,
+            ],
+            "Costs": [
+                cls.FUNDING_EARNINGS,
+                cls.FEES,
+                cls.ANNUAL_TURNOVER,
+                cls.TOTAL_ORDER_COUNT,
+                cls.AVERAGE_ORDER_NOTIONAL,
+            ],
+            "Exposure": [
+                cls.GROSS_EXPOSURE_MEAN_PCT,
+                cls.GROSS_EXPOSURE_MAX_PCT,
+                cls.NET_EXPOSURE_MEAN_PCT,
+                cls.NET_EXPOSURE_MAX_PCT,
+            ],
+            "Benchmark": [
+                cls.ALPHA,
+                cls.BETA,
+                cls.BENCHMARK_ANNUALIZED_RETURN_PCT,
+                cls.ACTIVE_ANNUAL_RETURN_PCT,
+                cls.TRACKING_ERROR,
+                cls.INFORMATION_RATIO,
+                cls.R2_VS_BENCHMARK,
+            ],
+            "Distribution": [
+                cls.CALMAR_RATIO,
+                cls.SKEWNESS,
+                cls.KURTOSIS,
+                cls.BEST_PERIOD_RETURN,
+                cls.WORST_PERIOD_RETURN,
+                cls.HIT_RATE,
+                cls.PROFIT_FACTOR,
+                cls.MAX_DRAWDOWN_DURATION_PERIODS,
+                cls.TIME_TO_RECOVERY_PERIODS,
+            ],
+            "Portfolio": [
+                cls.AVERAGE_HOLDING_PERIOD,
+                cls.COSTS_PCT_GROSS_PNL,
+                cls.FUNDING_PCT_TOTAL_PNL,
+                cls.AVERAGE_FUNDING_SETTLED,
+                cls.MAX_ABS_WEIGHT,
+            ],
+            "Risk": [
+                cls.ANNUALIZED_SORTINO,
+                cls.DOWNSIDE_DEVIATION,
+                cls.VAR_95_PCT,
+                cls.CVAR_95_PCT,
+                cls.OMEGA_RATIO,
+                cls.ULCER_INDEX,
+            ],
+            "Signal": [
+                cls.WEIGHT_IC_MEAN_NEXT,
+                cls.WEIGHT_IC_TSTAT_NEXT,
+                cls.TOP_BOTTOM_DECILE_SPREAD_MEAN_NEXT,
+                cls.TOP_BOTTOM_DECILE_SPREAD_TSTAT_NEXT,
+                cls.WEIGHTED_LONG_HIT_RATE_MEAN_NEXT,
+                cls.WEIGHTED_SHORT_HIT_RATE_MEAN_NEXT,
+                cls.FORWARD_RETURN_PER_GROSS_MEAN_NEXT,
+                cls.FORWARD_RETURN_SELECTION_PER_GROSS_MEAN_NEXT,
+                cls.FORWARD_RETURN_SELECTION_PER_GROSS_TSTAT_NEXT,
+                cls.GROSS_WEIGHT_MEAN,
+                cls.DIRECTIONALITY_MEAN,
+            ],
+        }
+
+
 class SignalArtifacts:
     """
     Signal-related artifacts derived from weights vs next returns.
@@ -161,7 +357,6 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Annualized volatility": "Sample standard deviation of returns annualized (decimal units). Lower is generally better for a given return level. Uses Bessel's correction (ddof=1) per industry standard.",
     "Annualized Sharpe": "Annualized excess return divided by annualized volatility (sample statistics). Higher is generally better (rule of thumb: >1 is good, >2 is strong).",
     "Max drawdown (equity) %": "Worst peak-to-trough % decline in equity. Less negative (closer to 0) is generally better.",
-    "Max drawdown (PnL) %": "Worst drawdown of cumulative PnL relative to prior PnL peak. Less negative (closer to 0) is generally better.",
     "Total return %": "Ending equity / initial cash minus 1, expressed in percent. Higher is generally better.",
     "Funding earnings": "Sum of funding payments (positive means net earned). Higher is generally better; negative values mean funding cost.",
     "Fees": "Sum of trading fees paid. Lower is generally better.",
@@ -169,10 +364,8 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Total order count": "Count of non-zero notional orders executed. Lower generally means less trading (and costs), but too low can indicate inactivity.",
     "Average order notional": "Mean absolute notional per executed order. Good depends on liquidity and constraints; too large can be hard to execute.",
     "Gross exposure mean %": "Average sum(|positions|) as % of equity. Lower generally means less leverage; values above 100% indicate leveraged exposure.",
-    "Gross exposure median %": "Median sum(|positions|) as % of equity. Lower generally means less leverage; values above 100% indicate leveraged exposure.",
     "Gross exposure max %": "Maximum sum(|positions|) as % of equity. Lower generally means tighter leverage control; very high peaks imply occasional high leverage.",
     "Net exposure mean %": "Average signed exposure as % of equity. Closer to 0 is generally more market-neutral; positive means net long, negative net short.",
-    "Net exposure median %": "Median signed exposure as % of equity. Closer to 0 is generally more market-neutral; positive means net long, negative net short.",
     "Net exposure max %": "Max absolute signed exposure as % of equity. Lower absolute values generally mean better exposure control.",
     "Alpha": "Annualized intercept vs benchmark excess returns (CAPM-style, sample statistics). Higher is generally better; near 0 implies little outperformance after adjusting for beta.",
     "Beta": "Slope vs benchmark excess returns (CAPM-style, sample covariance/variance). Values near 1 behave like the benchmark; values near 0 have low benchmark sensitivity.",
@@ -187,8 +380,6 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Best period return": "Maximum single-period return. Higher is generally better, but interpret alongside worst-period and drawdowns.",
     "Worst period return": "Minimum single-period return. Less negative (closer to 0) is generally better.",
     "Hit rate": "Fraction of non-zero return periods that are positive. Higher is generally better.",
-    "Avg win": "Mean return of positive-return periods. Higher is generally better.",
-    "Avg loss": "Mean return of negative-return periods. Less negative (closer to 0) is generally better.",
     "Profit factor": "Sum of wins divided by absolute sum of losses. Higher is generally better; values >1 mean wins outweigh losses.",
     "Max drawdown duration (periods)": "Longest consecutive underwater duration in periods. Shorter is generally better (capital recovers faster).",
     "Time to recovery (periods)": "Periods from drawdown peak to recovering the prior peak. Shorter is generally better.",
@@ -197,18 +388,14 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Funding % total pnl": "Funding as % of net PnL. Lower absolute values are generally better; large magnitudes mean funding dominates PnL.",
     "Average funding settled": "Average funding payment per period. Positive is generally better; negative means funding paid on average.",
     "Max abs weight": "Maximum absolute target weight across assets/periods. Lower is generally better (less concentration/leverage), given the strategy's intent.",
-    "Mean abs weight": "Mean absolute target weight across assets/periods. Lower is generally better (less aggregate risk), given the strategy's intent.",
     "Annualized Sortino": "Annualized excess return divided by annualized downside deviation. Higher is generally better; focuses on downside risk unlike Sharpe which penalizes upside volatility.",
     "Downside deviation": "Sample std dev of negative returns annualized (decimal units). Lower is generally better; measures downside risk only.",
     "VaR 95%": "Value at Risk at 95% confidence level (5th percentile of returns). Less negative (closer to 0) is generally better; worst expected loss in 19 out of 20 periods.",
     "CVaR 95%": "Conditional Value at Risk at 95% confidence level (mean of returns below VaR). Less negative (closer to 0) is generally better; average loss when VaR is exceeded.",
     "Omega Ratio": "Probability-weighted ratio of gains above threshold vs losses below threshold (uses 0 as threshold). Higher is generally better; values >1 mean gains outweigh losses.",
-    "Gain-to-Pain Ratio": "Sum of returns divided by sum of absolute returns. Higher is generally better; measures return per unit of total volatility.",
     "Ulcer Index": "RMS (root mean square) of drawdowns, annualized. Lower is generally better; alternative drawdown-based risk measure that penalizes depth and duration.",
     "Weight IC mean (next)": "Time-average cross-sectional correlation between weights at t and next-period asset returns (close-to-close), computed over the active universe (non-zero weights) each period.",
     "Weight IC t-stat (next)": "t-stat of the time series of per-period weight IC values. Higher absolute values suggest more statistically reliable alignment (not a guarantee).",
-    "Weight Rank IC mean (next)": "Time-average Spearman-style (rank) IC between weights and next-period asset returns, computed over the active universe (non-zero weights) each period.",
-    "Weight Rank IC t-stat (next)": "t-stat of the time series of per-period weight rank IC values.",
     "Top-bottom decile spread mean (next)": "Time-average next-period return spread between the top and bottom weight deciles within the active universe (assets with non-zero weights) each period.",
     "Top-bottom decile spread t-stat (next)": "t-stat of the time series of top-minus-bottom decile spreads.",
     "Weighted long hit rate mean (next)": "Average fraction of long gross weight placed in assets that have positive next-period returns (weights within each period). Higher is generally better.",
@@ -216,8 +403,6 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Forward return per gross mean (next)": "Average of (Σ w_t,i r_{t+1,i}) / (Σ |w_t,i|) each period. Normalizes for varying leverage and compares return per unit of gross weight.",
     "Forward return selection per gross mean (next)": "Average of the cross-sectional selection component of Σ w_t,i r_{t+1,i}, normalized by gross weight (active universe, next-period). Higher is generally better.",
     "Forward return selection per gross t-stat (next)": "t-stat of the time series of per-period selection-per-gross values.",
-    "Forward return directional per gross mean (next)": "Average of the directional component (net weight × mean next return of the active universe), normalized by gross weight (next-period). Magnitude near 0 indicates little directional dependence.",
-    "Forward return directional per gross t-stat (next)": "t-stat of the time series of per-period directional-per-gross values.",
     "Gross weight mean": "Average gross weight (Σ |w_t,i|) across periods with available next returns. Higher implies more leverage/total exposure in the signal.",
     "Directionality mean": "Average net-to-gross ratio (Σ w_t,i) / (Σ |w_t,i|). Values near 0 indicate market-neutral; positive is net long; negative net short.",
 }
@@ -241,13 +426,6 @@ def _max_drawdown(curve: pd.Series) -> float:
     running_max = curve.cummax()
     dd = curve / running_max - 1.0
     return float(dd.min())
-
-
-def _max_drawdown_pnl(pnl_curve: pd.Series) -> float:
-    running_max = pnl_curve.cummax()
-    denom = running_max.replace(0.0, np.nan)
-    dd = (pnl_curve - running_max) / denom
-    return float(dd.min(skipna=True) if dd.notna().any() else 0.0)
 
 
 def _annualization_factor(freq_rule: str, trading_days_year: int) -> float:
@@ -292,6 +470,11 @@ def _alpha_decay_next_return_by_type(
     - directional: (sum(w) * mean(r)) / gross
 
     This treats "decay" as the loss of edge when acting on the signal with a delay (lag).
+
+    Note: Forward returns are computed as close[t+1]/close[t] - 1. For 24/7 markets (e.g. crypto),
+    this accurately approximates the return from execution at open[t+1] to close[t+1], since
+    open[t+1] ≈ close[t] in continuous trading. For markets with overnight gaps, this may
+    overstate or understate signal quality depending on gap direction relative to the signal.
     """
 
     w = weights.fillna(0.0).astype(float)
@@ -359,6 +542,14 @@ def _weight_forward_diagnostics(
     pd.Series,
     pd.Series,
 ]:
+    """
+    Compute signal diagnostics by comparing weights at time t to next-period returns.
+
+    Forward returns are computed as close[t+1]/close[t] - 1. For 24/7 markets (e.g. crypto),
+    this accurately approximates the return from execution at open[t+1] to close[t+1], since
+    open[t+1] ≈ close[t] in continuous trading. For markets with overnight gaps, this may
+    overstate or understate signal quality depending on gap direction relative to the signal.
+    """
     w = weights.fillna(0.0).astype(float)
     fwd = close_prices.shift(-1).divide(close_prices).subtract(1.0)
     fwd = fwd.replace([np.inf, -np.inf], np.nan)
@@ -610,11 +801,9 @@ def _metrics(
         wf_deciles_contrib_short,
     ) = _weight_forward_diagnostics(weights=weights, close_prices=close_prices)
 
-    pnl_curve = equity - init_cash
     total_return_pct = float(equity.iloc[-1] / init_cash - 1.0)
 
     dd_equity = _max_drawdown(equity)
-    dd_pnl = _max_drawdown_pnl(pnl_curve)
 
     annual_factor = _annualization_factor(freq_rule, trading_days_year)
     if n_periods > 0:
@@ -651,8 +840,6 @@ def _metrics(
     win_count = int(wins.count())
     loss_count = int(losses.count())
     hit_rate = win_count / (win_count + loss_count) if (win_count + loss_count) > 0 else np.nan
-    avg_win = float(wins.mean()) if win_count > 0 else 0.0
-    avg_loss = float(losses.mean()) if loss_count > 0 else 0.0
     gross_profit = float(wins.sum())
     gross_loss = float(abs(losses.sum()))
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.nan
@@ -676,10 +863,7 @@ def _metrics(
         time_to_recovery = np.nan
 
     net_exposure_mean_pct = float(np.nanmean(net_exposure_ratio) * 100.0)
-    net_exposure_median_pct = float(np.nanmedian(net_exposure_ratio) * 100.0)
     net_exposure_max_pct = float(np.nanmax(np.abs(net_exposure_ratio)) * 100.0)
-
-    gross_exposure_median_pct = float(np.nanmedian(gross_exposure_ratio) * 100.0)
 
     holding_lengths: list[int] = []
     signs = np.sign(positions_hist)
@@ -716,7 +900,6 @@ def _metrics(
 
     abs_weights = np.abs(weights.to_numpy(dtype=float))
     max_abs_weight = float(np.nanmax(abs_weights))
-    mean_abs_weight = float(np.nanmean(abs_weights))
 
     # Additional risk metrics
     # Sortino Ratio - uses downside deviation instead of total volatility
@@ -746,11 +929,6 @@ def _metrics(
     gains_sum = float(gains.sum()) if len(gains) > 0 else 0.0
     losses_sum = float(abs(losses.sum())) if len(losses) > 0 else 0.0
     omega_ratio = gains_sum / losses_sum if losses_sum > 0 else np.nan
-
-    # Gain-to-Pain Ratio
-    sum_returns = float(returns.sum())
-    sum_abs_returns = float(returns.abs().sum())
-    gain_to_pain = sum_returns / sum_abs_returns if sum_abs_returns > 0 else np.nan
 
     # Ulcer Index - RMS of drawdowns
     drawdown_pct = drawdown * 100.0  # Convert to percentage
@@ -819,7 +997,6 @@ def _metrics(
         "Annualized volatility": annual_vol,
         "Annualized Sharpe": annual_sharpe,
         "Max drawdown (equity) %": dd_equity * 100.0,
-        "Max drawdown (PnL) %": dd_pnl * 100.0,
         "Total return %": total_return_pct * 100.0,
     }
     metrics_costs_and_trading = {
@@ -831,10 +1008,8 @@ def _metrics(
     }
     metrics_exposure = {
         "Gross exposure mean %": avg_gross_exposure_pct,
-        "Gross exposure median %": gross_exposure_median_pct,
         "Gross exposure max %": max_gross_exposure_pct,
         "Net exposure mean %": net_exposure_mean_pct,
-        "Net exposure median %": net_exposure_median_pct,
         "Net exposure max %": net_exposure_max_pct,
     }
     metrics_benchmark = {
@@ -853,8 +1028,6 @@ def _metrics(
         "Best period return": best_period_return,
         "Worst period return": worst_period_return,
         "Hit rate": hit_rate,
-        "Avg win": avg_win,
-        "Avg loss": avg_loss,
         "Profit factor": profit_factor,
         "Max drawdown duration (periods)": max_drawdown_duration,
         "Time to recovery (periods)": time_to_recovery,
@@ -865,7 +1038,6 @@ def _metrics(
         "Funding % total pnl": funding_pct_total_pnl,
         "Average funding settled": average_funding_settled,
         "Max abs weight": max_abs_weight,
-        "Mean abs weight": mean_abs_weight,
     }
     metrics_risk = {
         "Annualized Sortino": annual_sortino,
@@ -873,14 +1045,11 @@ def _metrics(
         "VaR 95%": var_95,
         "CVaR 95%": cvar_95,
         "Omega Ratio": omega_ratio,
-        "Gain-to-Pain Ratio": gain_to_pain,
         "Ulcer Index": ulcer_index,
     }
     metrics_weight_vs_next = {
         "Weight IC mean (next)": float(wf["ic"].mean(skipna=True)),
         "Weight IC t-stat (next)": _t_stat(wf["ic"]),
-        "Weight Rank IC mean (next)": float(wf["rank_ic"].mean(skipna=True)),
-        "Weight Rank IC t-stat (next)": _t_stat(wf["rank_ic"]),
         "Top-bottom decile spread mean (next)": float(wf["top_bottom_spread"].mean(skipna=True)),
         "Top-bottom decile spread t-stat (next)": _t_stat(wf["top_bottom_spread"]),
         "Weighted long hit rate mean (next)": float(wf["long_hit_weighted"].mean(skipna=True)),
@@ -893,12 +1062,6 @@ def _metrics(
         ),
         "Forward return selection per gross t-stat (next)": _t_stat(
             wf["forward_return_selection_per_gross"]
-        ),
-        "Forward return directional per gross mean (next)": float(
-            wf["forward_return_directional_per_gross"].mean(skipna=True)
-        ),
-        "Forward return directional per gross t-stat (next)": _t_stat(
-            wf["forward_return_directional_per_gross"]
         ),
         "Gross weight mean": float(wf["gross_weight"].mean(skipna=True)),
         "Directionality mean": float(wf["directionality"].mean(skipna=True)),

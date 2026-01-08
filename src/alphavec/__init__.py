@@ -11,8 +11,16 @@ from .search import (
     Metrics,
     grid_search,
 )
-from .metrics import MetricsArtifacts, TEARSHEET_NOTES, metrics_artifacts
+from .metrics import MetricKey, MetricsArtifacts, TEARSHEET_NOTES, metrics_artifacts
 from .tearsheet import tearsheet
+from .walk_forward import (
+    FoldConfig,
+    FoldResult,
+    FoldAggregation,
+    WalkForwardResult,
+    walk_forward,
+    DEFAULT_AGGREGATE_METRICS,
+)
 
 try:
     __version__ = _pkg_version("alphavec")
@@ -25,6 +33,7 @@ __all__ = [
     "SimulationResult",
     "MarketData",
     "SimConfig",
+    "MetricKey",
     "TEARSHEET_NOTES",
     "MetricsArtifacts",
     "metrics_artifacts",
@@ -32,5 +41,11 @@ __all__ = [
     "GridSearchBest",
     "GridSearchResults",
     "Metrics",
+    "walk_forward",
+    "FoldConfig",
+    "FoldResult",
+    "FoldAggregation",
+    "WalkForwardResult",
+    "DEFAULT_AGGREGATE_METRICS",
     "__version__",
 ]

@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 from pathlib import Path
 
-from alphavec import MarketData, SimConfig, metrics_artifacts, simulate, tearsheet
+from alphavec import MarketData, MetricKey, SimConfig, metrics_artifacts, simulate, tearsheet
 
 
 def _sim(
@@ -176,7 +176,6 @@ def test_simulate_oracle():
     assert float(metrics.loc["Fees", "Value"]) == pytest.approx(2.0909090909)
     assert float(metrics.loc["Funding earnings", "Value"]) == pytest.approx(0.0)
     assert float(metrics.loc["Max drawdown (equity) %", "Value"]) == pytest.approx(-0.1)
-    assert float(metrics.loc["Max drawdown (PnL) %", "Value"]) == pytest.approx(0.0)
     assert int(metrics.loc["Total order count", "Value"]) == 2
     assert float(metrics.loc["Average order notional", "Value"]) == pytest.approx(1045.4545454545)
     assert float(metrics.loc["Gross exposure max %", "Value"]) == pytest.approx(100.1001001001)
@@ -247,7 +246,6 @@ def test_simulate_reference():
     for key in [
         "Total return %",
         "Max drawdown (equity) %",
-        "Max drawdown (PnL) %",
         "Funding earnings",
         "Fees",
         "Annualized Sharpe",
@@ -945,3 +943,131 @@ def test_metrics_artifacts():
     artifacts_from_metrics = metrics_artifacts(result.metrics)
     assert artifacts_from_metrics.returns is artifacts.returns
     assert artifacts_from_metrics.signal.weight_forward is artifacts.signal.weight_forward
+
+
+def test_metric_key_all_keys():
+    # Case: MetricKey.all_keys() returns all defined metric keys.
+    keys = MetricKey.all_keys()
+    assert isinstance(keys, list)
+    assert len(keys) > 50  # Should have many metrics
+    assert MetricKey.ANNUALIZED_SHARPE in keys
+    assert MetricKey.MAX_DRAWDOWN_EQUITY_PCT in keys
+    assert MetricKey.TOTAL_RETURN_PCT in keys
+
+
+def test_metric_key_keys_by_category():
+    # Case: MetricKey.keys_by_category() returns metrics organized by category.
+    by_cat = MetricKey.keys_by_category()
+    assert isinstance(by_cat, dict)
+    expected_categories = ["Meta", "Performance", "Costs", "Exposure", "Benchmark", "Distribution", "Portfolio", "Risk", "Signal"]
+    assert set(by_cat.keys()) == set(expected_categories)
+
+    # Each category should have metrics
+    for cat, metrics in by_cat.items():
+        assert isinstance(metrics, list)
+        assert len(metrics) > 0
+
+    # Specific checks
+    assert MetricKey.ANNUALIZED_SHARPE in by_cat["Performance"]
+    assert MetricKey.MAX_DRAWDOWN_EQUITY_PCT in by_cat["Performance"]
+    assert MetricKey.VAR_95_PCT in by_cat["Risk"]
+    assert MetricKey.WEIGHT_IC_MEAN_NEXT in by_cat["Signal"]
+
+
+def test_metric_value_with_metric_key():
+    # Case: metric_value works with MetricKey constants.
+    dates = pd.date_range("2024-01-01", periods=5, freq="1D")
+    close_prices = pd.DataFrame({"BTC": [100.0, 110.0, 105.0, 120.0, 115.0]}, index=dates)
+    exec_prices = close_prices.shift(1).fillna(close_prices.iloc[0])
+    weights = pd.DataFrame({"BTC": [1.0] * len(dates)}, index=dates)
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+        freq_rule="1D",
+        trading_days_year=365,
+        risk_free_rate=0.0,
+    )
+
+    # Using MetricKey constants
+    sharpe = result.metric_value(MetricKey.ANNUALIZED_SHARPE)
+    assert isinstance(sharpe, float)
+
+    total_return = result.metric_value(MetricKey.TOTAL_RETURN_PCT)
+    assert isinstance(total_return, float)
+
+    # Default value for missing metric
+    missing = result.metric_value("Not a real metric", default=-999)
+    assert missing == -999
+
+
+def test_available_metrics():
+    # Case: available_metrics returns list of all metrics or filtered by category.
+    dates = pd.date_range("2024-01-01", periods=3, freq="1D")
+    close_prices = pd.DataFrame({"BTC": [100.0, 110.0, 120.0]}, index=dates)
+    exec_prices = close_prices.copy()
+    weights = pd.DataFrame({"BTC": [1.0, 1.0, 1.0]}, index=dates)
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+    )
+
+    # All metrics
+    all_metrics = result.available_metrics()
+    assert isinstance(all_metrics, list)
+    assert len(all_metrics) > 50
+    assert MetricKey.ANNUALIZED_SHARPE in all_metrics
+
+    # Filter by category
+    perf_metrics = result.available_metrics("Performance")
+    assert MetricKey.ANNUALIZED_SHARPE in perf_metrics
+    assert MetricKey.TOTAL_RETURN_PCT in perf_metrics
+    assert MetricKey.VAR_95_PCT not in perf_metrics  # VAR is in Risk, not Performance
+
+    risk_metrics = result.available_metrics("Risk")
+    assert MetricKey.VAR_95_PCT in risk_metrics
+    assert MetricKey.ANNUALIZED_SHARPE not in risk_metrics
+
+
+def test_metrics_dict():
+    # Case: metrics_dict returns all metrics as a dictionary.
+    dates = pd.date_range("2024-01-01", periods=3, freq="1D")
+    close_prices = pd.DataFrame({"BTC": [100.0, 110.0, 120.0]}, index=dates)
+    exec_prices = close_prices.copy()
+    weights = pd.DataFrame({"BTC": [1.0, 1.0, 1.0]}, index=dates)
+
+    result = _sim(
+        weights=weights,
+        close_prices=close_prices,
+        exec_prices=exec_prices,
+        funding_rates=None,
+        init_cash=1000.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        order_notional_min=0.0,
+    )
+
+    # All metrics as dict
+    all_dict = result.metrics_dict()
+    assert isinstance(all_dict, dict)
+    assert MetricKey.ANNUALIZED_SHARPE in all_dict
+    assert isinstance(all_dict[MetricKey.ANNUALIZED_SHARPE], float)
+
+    # Filter by category
+    perf_dict = result.metrics_dict("Performance")
+    assert MetricKey.ANNUALIZED_SHARPE in perf_dict
+    assert MetricKey.VAR_95_PCT not in perf_dict
+    assert len(perf_dict) < len(all_dict)

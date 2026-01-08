@@ -41,7 +41,32 @@ class SimulationResult:
     """
     Result object returned by `simulate()`.
 
-    Use `artifacts` for typed access to series stored in `metrics.attrs`.
+    Attributes:
+        returns: Period returns as a pandas Series.
+        metrics: Summary statistics DataFrame with 'Value', 'Category', and 'Note' columns.
+
+    Extracting Metrics:
+        Use `metric_value()` with `MetricKey` constants for type-safe metric access:
+
+            >>> from alphavec import MetricKey
+            >>> sharpe = result.metric_value(MetricKey.ANNUALIZED_SHARPE)
+            >>> max_dd = result.metric_value(MetricKey.MAX_DRAWDOWN_EQUITY_PCT)
+
+        For discovery, use `available_metrics()` or `metrics_dict()`:
+
+            >>> result.available_metrics()  # All metric keys
+            >>> result.available_metrics("Performance")  # Filter by category
+            >>> result.metrics_dict("Risk")  # Get all risk metrics as dict
+
+        See `MetricKey` for all available constants organized by category.
+
+    Artifacts:
+        Use `artifacts` for typed access to time series stored in `metrics.attrs`:
+
+            >>> art = result.artifacts
+            >>> equity = art.equity
+            >>> drawdown = art.drawdown_pct
+            >>> rolling_sharpe = art.rolling_sharpe(30)
     """
 
     returns: pd.Series
@@ -67,6 +92,43 @@ class SimulationResult:
         except Exception:
             return default
         return default if pd.isna(v) else v
+
+    def available_metrics(self, category: str | None = None) -> list[str]:
+        """
+        Return the list of available metric keys.
+
+        Args:
+            category: Optional category to filter by. If None, returns all metrics.
+                Valid categories: Meta, Performance, Costs, Exposure, Benchmark,
+                Distribution, Portfolio, Risk, Signal.
+
+        Returns:
+            List of metric key strings that can be passed to metric_value().
+
+        Example:
+            >>> result.available_metrics()  # All metrics
+            >>> result.available_metrics("Performance")  # Just performance metrics
+        """
+        if category is None:
+            return list(self.metrics.index)
+        return [m for m in self.metrics.index if self.metrics.loc[m, "Category"] == category]
+
+    def metrics_dict(self, category: str | None = None) -> dict[str, object]:
+        """
+        Return all metrics as a dictionary.
+
+        Args:
+            category: Optional category to filter by. If None, returns all metrics.
+
+        Returns:
+            Dictionary mapping metric keys to their values.
+
+        Example:
+            >>> result.metrics_dict()["Annualized Sharpe"]
+            >>> result.metrics_dict("Performance")
+        """
+        keys = self.available_metrics(category)
+        return {k: self.metric_value(k) for k in keys}
 
 
 @dataclass(frozen=True)
@@ -410,7 +472,14 @@ def simulate(
 
         - `returns`: Period returns as a pandas Series aligned to the input index.
         - `metrics`: Summary statistics as a pandas DataFrame with `Value` and `Note` columns.
-          Extra artifacts are attached via `metrics.attrs`, including:
+
+        Use `MetricKey` constants for type-safe metric extraction::
+
+            from alphavec import MetricKey
+            sharpe = result.metric_value(MetricKey.ANNUALIZED_SHARPE)
+            perf = result.metrics_dict("Performance")  # All performance metrics
+
+        Extra artifacts are attached via `metrics.attrs`, including:
 
           - `metrics.attrs["returns"]`: The returned `returns` series.
           - `metrics.attrs["returns_pct"]`: Per-period returns in percent.
