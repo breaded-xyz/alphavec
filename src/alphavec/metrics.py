@@ -372,6 +372,16 @@ class MetricsArtifacts:
         return self._attrs.get("transaction_costs")
 
     @property
+    def turnover(self) -> pd.Series | None:
+        """One-way turnover ratio per period."""
+        return self._attrs.get("turnover")
+
+    @property
+    def weight_turnover(self) -> pd.Series | None:
+        """Weight-based turnover per period (0.5 * sum of abs weight changes)."""
+        return self._attrs.get("weight_turnover")
+
+    @property
     def n_positions(self) -> pd.Series | None:
         return self._attrs.get("n_positions")
 
@@ -1203,6 +1213,9 @@ def _metrics(
 
     # Trading Activity & Costs time series
     df.attrs["turnover"] = pd.Series(turnover_ratio, index=weights.index, name="turnover")
+    df.attrs["weight_turnover"] = pd.Series(
+        weight_turnover_ratio, index=weights.index, name="weight_turnover"
+    )
     df.attrs["transaction_costs"] = pd.Series(
         (fees_paid + slippage_paid) / equity.values, index=weights.index, name="transaction_costs"
     )
