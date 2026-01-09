@@ -112,7 +112,10 @@ class MetricKey:
     FUNDING_EARNINGS: Final[str] = "Funding earnings"
     FUNDING_PCT_TOTAL_RETURN: Final[str] = "Funding % total return"
     FEES: Final[str] = "Fees"
-    ANNUAL_TURNOVER: Final[str] = "Annual turnover"
+    DAILY_TURNOVER_1WAY: Final[str] = "Daily Turnover (1-way)"
+    ANNUAL_TURNOVER_1WAY: Final[str] = "Annual Turnover (1-way)"
+    DAILY_WEIGHT_TURNOVER: Final[str] = "Daily Weight-based Turnover"
+    ANNUAL_WEIGHT_TURNOVER: Final[str] = "Annual Weight-based Turnover"
     TOTAL_ORDER_COUNT: Final[str] = "Total order count"
     AVERAGE_ORDER_NOTIONAL: Final[str] = "Average order notional"
 
@@ -211,7 +214,10 @@ class MetricKey:
                 cls.FUNDING_EARNINGS,
                 cls.FUNDING_PCT_TOTAL_RETURN,
                 cls.FEES,
-                cls.ANNUAL_TURNOVER,
+                cls.DAILY_TURNOVER_1WAY,
+                cls.ANNUAL_TURNOVER_1WAY,
+                cls.DAILY_WEIGHT_TURNOVER,
+                cls.ANNUAL_WEIGHT_TURNOVER,
                 cls.TOTAL_ORDER_COUNT,
                 cls.AVERAGE_ORDER_NOTIONAL,
             ],
@@ -426,7 +432,10 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Total return": "Ending equity minus initial cash, expressed in absolute currency. Higher is generally better; this is the net profit or loss.",
     "Funding earnings": "Sum of funding payments (positive means net earned). Higher is generally better; negative values mean funding cost.",
     "Fees": "Sum of trading fees paid. Lower is generally better.",
-    "Annual turnover": "Average per-period one-sided turnover annualized (not percent), computed as min(total buys, total sells) / equity before trading. Lower is generally better (less trading/costs), unless the strategy requires frequent rebalancing.",
+    "Daily Turnover (1-way)": "Mean daily one-sided turnover ratio, computed as min(total buys, total sells) / equity before trading. Lower is generally better (less trading/costs).",
+    "Annual Turnover (1-way)": "Annualized one-sided turnover ratio. Lower is generally better (less trading/costs), unless the strategy requires frequent rebalancing.",
+    "Daily Weight-based Turnover": "Mean daily weight-based turnover: 0.5 × Σ|w_t - w_{t-1}|, where w = notional/equity. Measures fraction of portfolio rebalanced per period.",
+    "Annual Weight-based Turnover": "Annualized weight-based turnover. For a 2× gross market-neutral portfolio fully rotating, this yields ~2.0 (200% of equity traded).",
     "Total order count": "Count of non-zero notional orders executed. Lower generally means less trading (and costs), but too low can indicate inactivity.",
     "Average order notional": "Mean absolute notional per executed order. Good depends on liquidity and constraints; too large can be hard to execute.",
     "Gross exposure mean %": "Average sum(|positions|) as % of equity. Lower generally means less leverage; values above 100% indicate leveraged exposure.",
@@ -843,6 +852,7 @@ def _metrics(
     fees_paid: np.ndarray,
     funding_earned: np.ndarray,
     turnover_ratio: np.ndarray,
+    weight_turnover_ratio: np.ndarray,
     gross_exposure_ratio: np.ndarray,
     net_exposure_ratio: np.ndarray,
     order_count_period: np.ndarray,
@@ -879,12 +889,18 @@ def _metrics(
         annual_sharpe = float(
             (annual_return - risk_free_rate) / annual_vol if annual_vol > 0 else np.nan
         )
-        annual_turnover = float(turnover_ratio.mean() * annual_factor)
+        daily_turnover_1way = float(turnover_ratio.mean())
+        annual_turnover_1way = float(turnover_ratio.mean() * annual_factor)
+        daily_weight_turnover = float(weight_turnover_ratio.mean())
+        annual_weight_turnover = float(weight_turnover_ratio.mean() * annual_factor)
     else:
         annual_return = 0.0
         annual_vol = 0.0
         annual_sharpe = np.nan
-        annual_turnover = 0.0
+        daily_turnover_1way = 0.0
+        annual_turnover_1way = 0.0
+        daily_weight_turnover = 0.0
+        annual_weight_turnover = 0.0
 
     total_order_count = int(order_count_period.sum())
     avg_order_notional = (
@@ -1071,7 +1087,10 @@ def _metrics(
         "Funding earnings": funding_total,
         "Funding % total return": funding_pct_total_pnl,
         "Fees": total_fees,
-        "Annual turnover": annual_turnover,
+        "Daily Turnover (1-way)": daily_turnover_1way,
+        "Annual Turnover (1-way)": annual_turnover_1way,
+        "Daily Weight-based Turnover": daily_weight_turnover,
+        "Annual Weight-based Turnover": annual_weight_turnover,
         "Total order count": total_order_count,
         "Average order notional": avg_order_notional,
     }

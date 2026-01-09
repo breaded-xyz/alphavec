@@ -258,7 +258,7 @@ DEFAULT_AGGREGATE_METRICS: list[str] = [
     MetricKey.HIT_RATE,
     MetricKey.PROFIT_FACTOR,
     # Costs
-    MetricKey.ANNUAL_TURNOVER,
+    MetricKey.ANNUAL_TURNOVER_1WAY,
     MetricKey.FEES,
     # Exposure
     MetricKey.GROSS_EXPOSURE_MEAN_PCT,

@@ -154,10 +154,28 @@
       <td>Definition: Sum of trading fees paid.<br>Interpretation: Lower is generally better.</td>
     </tr>
     <tr>
-      <th>Annual turnover</th>
+      <th>Daily Turnover (1-way)</th>
+      <td>Costs</td>
+      <td>0.128382</td>
+      <td>Definition: Mean daily one-sided turnover ratio, computed as min(total buys, total sells) / equity before trading.<br>Interpretation: Lower is generally better (less trading/costs).</td>
+    </tr>
+    <tr>
+      <th>Annual Turnover (1-way)</th>
       <td>Costs</td>
       <td>46.859533</td>
-      <td>Definition: Average per-period one-sided turnover annualized (not percent), computed as min(total buys, total sells) / equity before trading.<br>Interpretation: Lower is generally better (less trading/costs), unless the strategy requires frequent rebalancing.</td>
+      <td>Definition: Annualized one-sided turnover ratio.<br>Interpretation: Lower is generally better (less trading/costs), unless the strategy requires frequent rebalancing.</td>
+    </tr>
+    <tr>
+      <th>Daily Weight-based Turnover</th>
+      <td>Costs</td>
+      <td>0.166723</td>
+      <td>Definition: Mean daily weight-based turnover: 0.5 × Σ|w_t - w_{t-1}|, where w = notional/equity.<br>Interpretation: Measures fraction of portfolio rebalanced per period.</td>
+    </tr>
+    <tr>
+      <th>Annual Weight-based Turnover</th>
+      <td>Costs</td>
+      <td>60.853714</td>
+      <td>Definition: Annualized weight-based turnover.<br>Interpretation: For a 2× gross market-neutral portfolio fully rotating, this yields ~2.0 (200% of equity traded).</td>
     </tr>
     <tr>
       <th>Total order count</th>

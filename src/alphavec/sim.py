@@ -27,6 +27,7 @@ class _RunOutputs:
     fees_paid: np.ndarray
     funding_earned: np.ndarray
     turnover_ratio: np.ndarray
+    weight_turnover_ratio: np.ndarray
     gross_exposure_ratio: np.ndarray
     net_exposure_ratio: np.ndarray
     order_count_period: np.ndarray
@@ -305,6 +306,7 @@ def _run_simulation(
     fees_paid = np.empty(n_periods, dtype=float)
     funding_earned = np.empty(n_periods, dtype=float)
     turnover_ratio = np.empty(n_periods, dtype=float)
+    weight_turnover_ratio = np.empty(n_periods, dtype=float)
     gross_exposure_ratio = np.empty(n_periods, dtype=float)
     net_exposure_ratio = np.empty(n_periods, dtype=float)
     order_count_period = np.empty(n_periods, dtype=int)
@@ -320,6 +322,7 @@ def _run_simulation(
     last_ep = np.full(n_assets, np.nan, dtype=float)
     last_cp = np.full(n_assets, np.nan, dtype=float)
     positions_hist = np.empty((n_periods, n_assets), dtype=float)
+    prev_weights = np.zeros(n_assets, dtype=float)
 
     for i in range(n_periods):
         weights_raw = w[i]
@@ -413,11 +416,20 @@ def _run_simulation(
         net_exposure_ratio[i] = net_exposure / denom_equity if denom_equity != 0 else 0.0
         positions_hist[i] = positions
 
+        # Weight-based turnover: TO_t = 0.5 * Σ|w_t - w_{t-1}| where w = notional/equity
+        current_weights = close_notional / equity[i] if equity[i] != 0 else np.zeros(n_assets)
+        if i == 0:
+            weight_turnover_ratio[i] = 0.0
+        else:
+            weight_turnover_ratio[i] = 0.5 * float(np.abs(current_weights - prev_weights).sum())
+        prev_weights = current_weights.copy()
+
     return _RunOutputs(
         equity=equity,
         fees_paid=fees_paid,
         funding_earned=funding_earned,
         turnover_ratio=turnover_ratio,
+        weight_turnover_ratio=weight_turnover_ratio,
         gross_exposure_ratio=gross_exposure_ratio,
         net_exposure_ratio=net_exposure_ratio,
         order_count_period=order_count_period,
@@ -568,6 +580,7 @@ def simulate(
         fees_paid=run.fees_paid,
         funding_earned=run.funding_earned,
         turnover_ratio=run.turnover_ratio,
+        weight_turnover_ratio=run.weight_turnover_ratio,
         gross_exposure_ratio=run.gross_exposure_ratio,
         net_exposure_ratio=run.net_exposure_ratio,
         order_count_period=run.order_count_period,
