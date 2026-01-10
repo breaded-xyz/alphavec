@@ -869,24 +869,41 @@ def _metrics(
     order_notional_sum_period: np.ndarray,
     slippage_paid: np.ndarray,
     positions_hist: np.ndarray,
+    compute_signal_diagnostics: bool = True,
 ) -> pd.DataFrame:
     """
     Build a metrics DataFrame from simulation outputs.
+
+    Args:
+        compute_signal_diagnostics: If True, compute expensive signal diagnostics
+            (weight IC, rank IC, decile analysis). Set to False for faster grid search
+            when only basic metrics (Sharpe, returns, etc.) are needed.
     """
 
     n_periods = int(len(returns))
     n_assets = int(weights.shape[1])
 
-    (
-        wf,
-        wf_deciles,
-        wf_deciles_median,
-        wf_deciles_std,
-        wf_deciles_count,
-        wf_deciles_contrib,
-        wf_deciles_contrib_long,
-        wf_deciles_contrib_short,
-    ) = _weight_forward_diagnostics(weights=weights, close_prices=close_prices)
+    if compute_signal_diagnostics:
+        (
+            wf,
+            wf_deciles,
+            wf_deciles_median,
+            wf_deciles_std,
+            wf_deciles_count,
+            wf_deciles_contrib,
+            wf_deciles_contrib_long,
+            wf_deciles_contrib_short,
+        ) = _weight_forward_diagnostics(weights=weights, close_prices=close_prices)
+    else:
+        # Skip expensive diagnostics - return empty placeholders
+        wf = pd.DataFrame()
+        wf_deciles = pd.DataFrame()
+        wf_deciles_median = pd.Series(dtype=float)
+        wf_deciles_std = pd.Series(dtype=float)
+        wf_deciles_count = pd.Series(dtype=float)
+        wf_deciles_contrib = pd.Series(dtype=float)
+        wf_deciles_contrib_long = pd.Series(dtype=float)
+        wf_deciles_contrib_short = pd.Series(dtype=float)
 
     total_return_pct = float(equity.iloc[-1] / init_cash - 1.0)
 
@@ -1145,25 +1162,41 @@ def _metrics(
         "Omega Ratio": omega_ratio,
         "Ulcer Index": ulcer_index,
     }
-    metrics_weight_vs_next = {
-        "Weight IC mean (next)": float(wf["ic"].mean(skipna=True)),
-        "Weight IC t-stat (next)": _t_stat(wf["ic"]),
-        "Top-bottom decile spread mean (next)": float(wf["top_bottom_spread"].mean(skipna=True)),
-        "Top-bottom decile spread t-stat (next)": _t_stat(wf["top_bottom_spread"]),
-        "Weighted long hit rate mean (next)": float(wf["long_hit_weighted"].mean(skipna=True)),
-        "Weighted short hit rate mean (next)": float(wf["short_hit_weighted"].mean(skipna=True)),
-        "Forward return per gross mean (next)": float(
-            wf["forward_return_per_gross"].mean(skipna=True)
-        ),
-        "Forward return selection per gross mean (next)": float(
-            wf["forward_return_selection_per_gross"].mean(skipna=True)
-        ),
-        "Forward return selection per gross t-stat (next)": _t_stat(
-            wf["forward_return_selection_per_gross"]
-        ),
-        "Gross weight mean": float(wf["gross_weight"].mean(skipna=True)),
-        "Directionality mean": float(wf["directionality"].mean(skipna=True)),
-    }
+    if compute_signal_diagnostics and not wf.empty:
+        metrics_weight_vs_next = {
+            "Weight IC mean (next)": float(wf["ic"].mean(skipna=True)),
+            "Weight IC t-stat (next)": _t_stat(wf["ic"]),
+            "Top-bottom decile spread mean (next)": float(wf["top_bottom_spread"].mean(skipna=True)),
+            "Top-bottom decile spread t-stat (next)": _t_stat(wf["top_bottom_spread"]),
+            "Weighted long hit rate mean (next)": float(wf["long_hit_weighted"].mean(skipna=True)),
+            "Weighted short hit rate mean (next)": float(wf["short_hit_weighted"].mean(skipna=True)),
+            "Forward return per gross mean (next)": float(
+                wf["forward_return_per_gross"].mean(skipna=True)
+            ),
+            "Forward return selection per gross mean (next)": float(
+                wf["forward_return_selection_per_gross"].mean(skipna=True)
+            ),
+            "Forward return selection per gross t-stat (next)": _t_stat(
+                wf["forward_return_selection_per_gross"]
+            ),
+            "Gross weight mean": float(wf["gross_weight"].mean(skipna=True)),
+            "Directionality mean": float(wf["directionality"].mean(skipna=True)),
+        }
+    else:
+        # Signal diagnostics skipped - return NaN placeholders
+        metrics_weight_vs_next = {
+            "Weight IC mean (next)": np.nan,
+            "Weight IC t-stat (next)": np.nan,
+            "Top-bottom decile spread mean (next)": np.nan,
+            "Top-bottom decile spread t-stat (next)": np.nan,
+            "Weighted long hit rate mean (next)": np.nan,
+            "Weighted short hit rate mean (next)": np.nan,
+            "Forward return per gross mean (next)": np.nan,
+            "Forward return selection per gross mean (next)": np.nan,
+            "Forward return selection per gross t-stat (next)": np.nan,
+            "Gross weight mean": np.nan,
+            "Directionality mean": np.nan,
+        }
 
     # Build complete metrics with categories
     all_metrics = [
@@ -1205,11 +1238,14 @@ def _metrics(
     df.attrs["weight_forward_deciles_contrib"] = wf_deciles_contrib
     df.attrs["weight_forward_deciles_contrib_long"] = wf_deciles_contrib_long
     df.attrs["weight_forward_deciles_contrib_short"] = wf_deciles_contrib_short
-    df.attrs["alpha_decay_next_return_by_type"] = _alpha_decay_next_return_by_type(
-        weights=weights,
-        close_prices=close_prices,
-        max_lag=10,
-    )
+    if compute_signal_diagnostics:
+        df.attrs["alpha_decay_next_return_by_type"] = _alpha_decay_next_return_by_type(
+            weights=weights,
+            close_prices=close_prices,
+            max_lag=10,
+        )
+    else:
+        df.attrs["alpha_decay_next_return_by_type"] = pd.DataFrame()
 
     # Trading Activity & Costs time series
     df.attrs["turnover"] = pd.Series(turnover_ratio, index=weights.index, name="turnover")

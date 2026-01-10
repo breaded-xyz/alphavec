@@ -152,6 +152,7 @@ class SimConfig:
     freq_rule: str = "1D"
     trading_days_year: int = 365
     risk_free_rate: float = 0.0
+    compute_signal_diagnostics: bool = True
 
 
 def _to_frame(x: pd.DataFrame | pd.Series, name: str) -> pd.DataFrame:
@@ -587,6 +588,7 @@ def simulate(
         order_notional_sum_period=run.order_notional_sum_period,
         slippage_paid=run.slippage_paid,
         positions_hist=run.positions_hist,
+        compute_signal_diagnostics=cfg.compute_signal_diagnostics,
     )
 
     metrics.attrs["returns"] = returns

@@ -4,7 +4,7 @@ Parameter search utilities for alphavec simulations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Callable
 from collections.abc import Collection, Mapping, Sequence
@@ -370,7 +370,7 @@ def grid_search(
     base_params: Mapping[str, Any] | None = None,
     param_grids: Collection[Mapping[str, Sequence[Any]]],
     progress: bool | str = False,
-    max_workers: int | None = None,
+    max_workers: int = 1,
     market: MarketData,
     config: SimConfig | None = None,
     executor: cf.Executor | None = None,
@@ -406,6 +406,8 @@ def grid_search(
             2D grids: {"param1": [values], "param2": [values]}
         progress: If True, show default progress bar; if string, use as custom description; if False, no progress bar (requires `tqdm`).
         max_workers: Maximum worker threads used when this function creates its own executor.
+            Defaults to 1 (sequential) which is typically fastest for CPU-bound simulation
+            workloads due to Python's GIL. Increase only if your weight generation is I/O-bound.
         market: Market data passed through to `simulate()`.
         config: Simulation config passed through to `simulate()`.
         executor: Optional `concurrent.futures.Executor`. If provided, it is used and not shut down
@@ -430,6 +432,12 @@ def grid_search(
         objective_metric = objective_metric.value
     else:
         objective_metric = str(objective_metric)
+
+    # Create fast config for grid search runs (skip expensive signal diagnostics)
+    # The final best result is re-simulated with full diagnostics
+    search_config = config or SimConfig()
+    if search_config.compute_signal_diagnostics:
+        search_config = replace(search_config, compute_signal_diagnostics=False)
 
     # Convert dict grids to internal representation
     grids: tuple[_Grid, ...] = tuple(_to_grid(g, i) for i, g in enumerate(param_grids))
@@ -488,7 +496,7 @@ def grid_search(
     ) -> tuple[int, int, int, Any, Any, float, str]:
         grid_index, i1, i2, v1, v2, params = task
         weights = generate_weights(params)
-        metrics = simulate(weights=weights, market=market, config=config).metrics
+        metrics = simulate(weights=weights, market=market, config=search_config).metrics
         val = _objective_value(metrics, objective_metric)
         return grid_index, i1, i2, v1, v2, val, str(objective_metric)
 
