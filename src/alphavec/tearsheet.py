@@ -627,38 +627,67 @@ def tearsheet(
     if len(signal_blocks) > 0:
         signal_section_html = "<h2>Signal</h2>" + "".join(signal_blocks)
 
-    # Parameter search heatmaps
+    # Parameter search plots (line plots for 1D, heatmaps for 2D)
     search_section_html = ""
     if grid_results is not None and len(grid_results.param_grids) > 0:
-        heatmaps: list[str] = []
+        search_plots: list[str] = []
         for i, grid in enumerate(grid_results.param_grids):
-            z = grid_results.pivot(grid_index=i)
-            z_num = z.apply(pd.to_numeric, errors="coerce")
-            fig, ax = plt.subplots(
-                figsize=(max(6.0, 0.6 * z_num.shape[1] + 2.0), max(4.0, 0.55 * z_num.shape[0] + 2.0))
-            )
-            sns.heatmap(
-                z_num,
-                ax=ax,
-                cmap="RdBu_r",
-                center=0.0,
-                cbar_kws={"label": grid_results.objective_metric},
-            )
-            ax.set_title(f"{grid_results.objective_metric} heatmap ({grid.label()})")
-            ax.set_xlabel(grid.param2_name)
-            ax.set_ylabel(grid.param1_name)
-            fig.tight_layout()
-            heatmaps.append(
-                _plot_block(
-                    title=f"{grid_results.objective_metric} heatmap ({grid.label()})",
-                    fig=fig,
-                    note=(
-                        f"Objective value ({grid_results.objective_metric}) across the 2D parameter grid.",
-                        "Look for stable regions (broad plateaus) rather than isolated spikes to reduce overfitting risk.",
-                    ),
+            if grid.is_1d():
+                # Line plot for 1D grids
+                df = grid_results.for_grid(i).sort_values("param_value")
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ax.plot(
+                    df["param_value"],
+                    df["objective_value"],
+                    marker="o",
+                    linewidth=2,
+                    markersize=8,
+                    color="#1f77b4",
                 )
-            )
-        search_section_html = "<h2>Parameter Search</h2>" + "".join(heatmaps)
+                ax.set_xlabel(grid.param_name, fontsize=12)
+                ax.set_ylabel(str(grid_results.objective_metric), fontsize=12)
+                ax.set_title(f"{grid_results.objective_metric} vs {grid.param_name}")
+                ax.grid(True, alpha=0.3)
+                fig.tight_layout()
+                search_plots.append(
+                    _plot_block(
+                        title=f"{grid_results.objective_metric} vs {grid.param_name}",
+                        fig=fig,
+                        note=(
+                            f"Objective value ({grid_results.objective_metric}) across the 1D parameter grid.",
+                            "Look for smooth curves with clear optima; sharp peaks may indicate overfitting.",
+                        ),
+                    )
+                )
+            else:
+                # Heatmap for 2D grids
+                z = grid_results.pivot(grid_index=i)
+                z_num = z.apply(pd.to_numeric, errors="coerce")
+                fig, ax = plt.subplots(
+                    figsize=(max(6.0, 0.6 * z_num.shape[1] + 2.0), max(4.0, 0.55 * z_num.shape[0] + 2.0))
+                )
+                sns.heatmap(
+                    z_num,
+                    ax=ax,
+                    cmap="RdBu_r",
+                    center=0.0,
+                    cbar_kws={"label": grid_results.objective_metric},
+                )
+                ax.set_title(f"{grid_results.objective_metric} heatmap ({grid.label()})")
+                ax.set_xlabel(grid.param2_name)
+                ax.set_ylabel(grid.param1_name)
+                fig.tight_layout()
+                search_plots.append(
+                    _plot_block(
+                        title=f"{grid_results.objective_metric} heatmap ({grid.label()})",
+                        fig=fig,
+                        note=(
+                            f"Objective value ({grid_results.objective_metric}) across the 2D parameter grid.",
+                            "Look for stable regions (broad plateaus) rather than isolated spikes to reduce overfitting risk.",
+                        ),
+                    )
+                )
+        search_section_html = "<h2>Parameter Search</h2>" + "".join(search_plots)
 
     plots_section = (
         "<h2>Performance</h2>"
