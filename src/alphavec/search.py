@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any, Callable
 from collections.abc import Collection, Mapping, Sequence
 import concurrent.futures as cf
+import gc
 import warnings
 
 import numpy as np
@@ -511,18 +512,28 @@ def grid_search(
 
         pbar = tqdm(total=len(tasks), desc=desc, unit="run")
 
+    # Periodic garbage collection for large grids to manage memory
+    gc_interval = 50  # Collect every N completions
+    n_tasks = len(tasks)
+
     try:
         futures = [executor.submit(_run_one, task) for task in tasks]
         rows: list[tuple[int, int, int, Any, Any, float, str]] = []
-        for fut in cf.as_completed(futures):
+        for i, fut in enumerate(cf.as_completed(futures), 1):
             rows.append(fut.result())
             if pbar is not None:
                 pbar.update(1)
+            # Periodic GC for large searches to prevent memory buildup
+            if n_tasks >= gc_interval and i % gc_interval == 0:
+                gc.collect()
     finally:
         if pbar is not None:
             pbar.close()
         if owns_executor:
             executor.shutdown(wait=True, cancel_futures=False)
+        # Final cleanup after all simulations complete
+        if n_tasks >= gc_interval:
+            gc.collect()
 
     keys = {key for *_rest, key in rows}
     if len(keys) != 1:
