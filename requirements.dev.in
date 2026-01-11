@@ -7,3 +7,4 @@ pytest
 pyarrow
 nbformat
 tqdm
+loky
