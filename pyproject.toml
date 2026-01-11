@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "alphavec"
-version = "0.6.0"
-description = "Fast minimalist vector-based grid search and backtesting for perpetual futures."
+version = "0.6.1"
+description = "Fast minimalist vector-based simulation and grid search for perpetual futures."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
