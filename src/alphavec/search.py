@@ -4,6 +4,7 @@ Parameter search utilities for alphavec simulations.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Callable
@@ -16,6 +17,26 @@ import numpy as np
 import pandas as pd
 
 from .sim import MarketData, SimConfig, SimulationResult, simulate
+
+
+def _run_one_mp(
+    task: tuple[int, int, int, Any, Any, dict[str, Any]],
+    generate_weights: Callable[[Mapping[str, Any]], Any],
+    market: MarketData,
+    config: SimConfig,
+    objective_metric: str,
+) -> tuple[int, int, int, Any, Any, float, str]:
+    """
+    Module-level worker function for multiprocessing.
+
+    Unlike the nested _run_one, this takes all dependencies as explicit arguments
+    to enable pickling via cloudpickle/loky.
+    """
+    grid_index, i1, i2, v1, v2, params = task
+    weights = generate_weights(params)
+    metrics = simulate(weights=weights, market=market, config=config).metrics
+    val = _objective_value(metrics, objective_metric)
+    return grid_index, i1, i2, v1, v2, val, objective_metric
 
 
 class Metrics(str, Enum):
@@ -370,7 +391,8 @@ def grid_search(
     base_params: Mapping[str, Any] | None = None,
     param_grids: Collection[Mapping[str, Sequence[Any]]],
     progress: bool | str = False,
-    max_workers: int = 1,
+    max_workers: int | None = None,
+    use_multiprocessing: bool = False,
     market: MarketData,
     config: SimConfig | None = None,
     executor: cf.Executor | None = None,
@@ -405,9 +427,12 @@ def grid_search(
             1D grids: {"param": [value1, value2, ...]}
             2D grids: {"param1": [values], "param2": [values]}
         progress: If True, show default progress bar; if string, use as custom description; if False, no progress bar (requires `tqdm`).
-        max_workers: Maximum worker threads used when this function creates its own executor.
-            Defaults to 1 (sequential) which is typically fastest for CPU-bound simulation
-            workloads due to Python's GIL. Increase only if your weight generation is I/O-bound.
+        max_workers: Maximum workers when creating an executor. Defaults to None which means:
+            - For threading (`use_multiprocessing=False`): 1 worker (sequential, avoids GIL overhead)
+            - For multiprocessing (`use_multiprocessing=True`): `os.cpu_count()` (auto-detect)
+        use_multiprocessing: If True, use process-based parallelism (via loky) instead of
+            threads. This bypasses Python's GIL for true parallelism on CPU-bound workloads.
+            Defaults to False for backward compatibility. Ignored when `executor` is provided.
         market: Market data passed through to `simulate()`.
         config: Simulation config passed through to `simulate()`.
         executor: Optional `concurrent.futures.Executor`. If provided, it is used and not shut down
@@ -500,8 +525,31 @@ def grid_search(
         val = _objective_value(metrics, objective_metric)
         return grid_index, i1, i2, v1, v2, val, str(objective_metric)
 
+    # Select worker function based on execution mode
     owns_executor = executor is None
-    if executor is None:
+    use_mp = use_multiprocessing and executor is None
+
+    # Resolve max_workers: None means auto-detect
+    if max_workers is None:
+        if use_mp:
+            max_workers = os.cpu_count() or 4
+        else:
+            max_workers = 1  # Sequential for threading (avoids GIL overhead)
+
+    if use_mp:
+        # Use loky for true process-based parallelism (bypasses GIL)
+        from functools import partial
+        from loky import get_reusable_executor
+
+        worker_fn = partial(
+            _run_one_mp,
+            generate_weights=generate_weights,
+            market=market,
+            config=search_config,
+            objective_metric=objective_metric,
+        )
+        executor = get_reusable_executor(max_workers=max_workers)
+    elif executor is None:
         executor = cf.ThreadPoolExecutor(max_workers=max_workers)
 
     pbar = None
@@ -525,7 +573,10 @@ def grid_search(
     n_tasks = len(tasks)
 
     try:
-        futures = [executor.submit(_run_one, task) for task in tasks]
+        if use_mp:
+            futures = [executor.submit(worker_fn, task) for task in tasks]
+        else:
+            futures = [executor.submit(_run_one, task) for task in tasks]
         rows: list[tuple[int, int, int, Any, Any, float, str]] = []
         for i, fut in enumerate(cf.as_completed(futures), 1):
             rows.append(fut.result())
@@ -537,7 +588,8 @@ def grid_search(
     finally:
         if pbar is not None:
             pbar.close()
-        if owns_executor:
+        if owns_executor and not use_mp:
+            # Only shutdown ThreadPoolExecutor; loky manages its own workers
             executor.shutdown(wait=True, cancel_futures=False)
         # Final cleanup after all simulations complete
         if n_tasks >= gc_interval:

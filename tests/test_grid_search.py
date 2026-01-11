@@ -75,3 +75,65 @@ def test_search_and_simulate_matches_simulate_for_one_point():
     assert float(results.best.result.metrics.loc["Annualized Sharpe", "Value"]) == pytest.approx(
         float(results.best.objective_value)
     )
+
+
+def test_grid_search_multiprocessing():
+    """Test that use_multiprocessing=True produces identical results to threading."""
+    rng = np.random.default_rng(42)
+    dates = pd.date_range("2024-01-01", periods=30, freq="1D")
+    assets = ["A", "B"]
+
+    rets = pd.DataFrame(
+        rng.normal(0.001, 0.02, size=(len(dates), len(assets))),
+        index=dates,
+        columns=assets,
+    )
+    close_prices = (100.0 * (1.0 + rets).cumprod()).astype(float)
+    exec_prices = close_prices.copy()
+
+    def generate_weights(params: dict) -> pd.DataFrame:
+        mult = float(params["mult"])
+        return pd.DataFrame(mult, index=dates, columns=assets)
+
+    market = MarketData(close_prices=close_prices, exec_prices=exec_prices, funding_rates=None)
+    config = SimConfig(init_cash=1000.0, freq_rule="1D", trading_days_year=365)
+
+    # Run with threading (default)
+    results_thread = grid_search(
+        generate_weights=generate_weights,
+        param_grids=[{"mult": [0.5, 1.0, 1.5]}],
+        objective_metric="Annualized Sharpe",
+        max_workers=2,
+        use_multiprocessing=False,
+        market=market,
+        config=config,
+    )
+
+    # Run with multiprocessing
+    results_mp = grid_search(
+        generate_weights=generate_weights,
+        param_grids=[{"mult": [0.5, 1.0, 1.5]}],
+        objective_metric="Annualized Sharpe",
+        max_workers=2,
+        use_multiprocessing=True,
+        market=market,
+        config=config,
+    )
+
+    # Results should be identical
+    assert results_thread.table.shape == results_mp.table.shape
+    assert list(results_thread.table["param_value"]) == list(results_mp.table["param_value"])
+
+    # Objective values should match
+    thread_vals = results_thread.table["objective_value"].tolist()
+    mp_vals = results_mp.table["objective_value"].tolist()
+    for t, m in zip(thread_vals, mp_vals):
+        assert float(t) == pytest.approx(float(m))
+
+    # Best result should match
+    assert results_thread.best is not None
+    assert results_mp.best is not None
+    assert results_thread.best.params == results_mp.best.params
+    assert float(results_thread.best.objective_value) == pytest.approx(
+        float(results_mp.best.objective_value)
+    )
