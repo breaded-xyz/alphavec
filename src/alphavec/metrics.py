@@ -163,6 +163,8 @@ class MetricKey:
     # --- Signal ---
     WEIGHT_IC_MEAN_NEXT: Final[str] = "Weight IC mean (next)"
     WEIGHT_IC_TSTAT_NEXT: Final[str] = "Weight IC t-stat (next)"
+    WEIGHT_RANK_IC_MEAN_NEXT: Final[str] = "Weight Rank IC mean (next)"
+    WEIGHT_RANK_IC_TSTAT_NEXT: Final[str] = "Weight Rank IC t-stat (next)"
     TOP_BOTTOM_DECILE_SPREAD_MEAN_NEXT: Final[str] = "Top-bottom decile spread mean (next)"
     TOP_BOTTOM_DECILE_SPREAD_TSTAT_NEXT: Final[str] = "Top-bottom decile spread t-stat (next)"
     WEIGHTED_LONG_HIT_RATE_MEAN_NEXT: Final[str] = "Weighted long hit rate mean (next)"
@@ -176,6 +178,9 @@ class MetricKey:
     )
     GROSS_WEIGHT_MEAN: Final[str] = "Gross weight mean"
     DIRECTIONALITY_MEAN: Final[str] = "Directionality mean"
+    # Turnover-adjusted signal metrics
+    TURNOVER_ADJUSTED_IC_MEAN_NEXT: Final[str] = "Turnover-adjusted IC mean (next)"
+    NET_FORWARD_RETURN_PER_GROSS_MEAN_NEXT: Final[str] = "Net forward return per gross mean (next)"
 
     @classmethod
     def all_keys(cls) -> list[str]:
@@ -265,6 +270,8 @@ class MetricKey:
             "Signal": [
                 cls.WEIGHT_IC_MEAN_NEXT,
                 cls.WEIGHT_IC_TSTAT_NEXT,
+                cls.WEIGHT_RANK_IC_MEAN_NEXT,
+                cls.WEIGHT_RANK_IC_TSTAT_NEXT,
                 cls.TOP_BOTTOM_DECILE_SPREAD_MEAN_NEXT,
                 cls.TOP_BOTTOM_DECILE_SPREAD_TSTAT_NEXT,
                 cls.WEIGHTED_LONG_HIT_RATE_MEAN_NEXT,
@@ -274,6 +281,8 @@ class MetricKey:
                 cls.FORWARD_RETURN_SELECTION_PER_GROSS_TSTAT_NEXT,
                 cls.GROSS_WEIGHT_MEAN,
                 cls.DIRECTIONALITY_MEAN,
+                cls.TURNOVER_ADJUSTED_IC_MEAN_NEXT,
+                cls.NET_FORWARD_RETURN_PER_GROSS_MEAN_NEXT,
             ],
         }
 
@@ -321,6 +330,142 @@ class SignalArtifacts:
     @property
     def alpha_decay_next_return_by_type(self) -> pd.DataFrame | None:
         return self._attrs.get("alpha_decay_next_return_by_type")
+
+    @property
+    def decay_horizons(self) -> pd.DataFrame | None:
+        """Multi-horizon signal decay (IC, Rank IC, decile spread by forward horizon)."""
+        return self._attrs.get("signal_decay_horizons")
+
+    @property
+    def by_asset(self) -> pd.DataFrame | None:
+        """Per-asset signal breakdown (IC, hit rate, contribution per asset)."""
+        return self._attrs.get("signal_by_asset")
+
+    # ── Convenience time series accessors ────────────────────────────────────
+
+    @property
+    def ic_series(self) -> pd.Series | None:
+        """Per-period Information Coefficient (Pearson correlation)."""
+        wf = self.weight_forward
+        if wf is None or "ic" not in wf.columns:
+            return None
+        return wf["ic"].rename("ic")
+
+    @property
+    def rank_ic_series(self) -> pd.Series | None:
+        """Per-period Spearman Rank IC."""
+        wf = self.weight_forward
+        if wf is None or "rank_ic" not in wf.columns:
+            return None
+        return wf["rank_ic"].rename("rank_ic")
+
+    @property
+    def decile_spread_series(self) -> pd.Series | None:
+        """Per-period top-bottom decile spread."""
+        wf = self.weight_forward
+        if wf is None or "top_bottom_spread" not in wf.columns:
+            return None
+        return wf["top_bottom_spread"].rename("decile_spread")
+
+    @property
+    def directionality_series(self) -> pd.Series | None:
+        """Per-period net/gross ratio (market neutrality measure)."""
+        wf = self.weight_forward
+        if wf is None or "directionality" not in wf.columns:
+            return None
+        return wf["directionality"].rename("directionality")
+
+    @property
+    def forward_return_per_gross_series(self) -> pd.Series | None:
+        """Per-period forward return normalized by gross weight."""
+        wf = self.weight_forward
+        if wf is None or "forward_return_per_gross" not in wf.columns:
+            return None
+        return wf["forward_return_per_gross"].rename("forward_return_per_gross")
+
+    @property
+    def long_hit_rate_series(self) -> pd.Series | None:
+        """Per-period weighted long hit rate."""
+        wf = self.weight_forward
+        if wf is None or "long_hit_weighted" not in wf.columns:
+            return None
+        return wf["long_hit_weighted"].rename("long_hit_rate")
+
+    @property
+    def short_hit_rate_series(self) -> pd.Series | None:
+        """Per-period weighted short hit rate."""
+        wf = self.weight_forward
+        if wf is None or "short_hit_weighted" not in wf.columns:
+            return None
+        return wf["short_hit_weighted"].rename("short_hit_rate")
+
+    @property
+    def gross_weight_series(self) -> pd.Series | None:
+        """Per-period total gross weight."""
+        wf = self.weight_forward
+        if wf is None or "gross_weight" not in wf.columns:
+            return None
+        return wf["gross_weight"].rename("gross_weight")
+
+    def rolling(
+        self,
+        window: int = 90,
+        min_periods: int | None = None,
+    ) -> pd.DataFrame | None:
+        """
+        Compute rolling-window signal metrics.
+
+        This is computed lazily on each call (not stored in attrs) since
+        users may want different window sizes.
+
+        Args:
+            window: Rolling window size in periods (default: 90)
+            min_periods: Minimum observations required (default: window // 3)
+
+        Returns:
+            DataFrame with columns:
+            - ic_mean: Rolling mean IC
+            - ic_tstat: Rolling t-stat of IC
+            - rank_ic_mean: Rolling mean Rank IC
+            - rank_ic_tstat: Rolling t-stat of Rank IC
+            - decile_spread_mean: Rolling mean decile spread
+            - decile_spread_tstat: Rolling t-stat of decile spread
+
+        Example:
+            >>> rolling = result.artifacts.signal.rolling(window=252)
+            >>> rolling["ic_mean"].plot(title="Rolling 1Y IC")
+        """
+        wf = self.weight_forward
+        if wf is None or len(wf) < window:
+            return None
+
+        if min_periods is None:
+            min_periods = max(3, window // 3)
+
+        result_cols: dict[str, pd.Series] = {}
+
+        for col, prefix in [
+            ("ic", "ic"),
+            ("rank_ic", "rank_ic"),
+            ("top_bottom_spread", "decile_spread"),
+        ]:
+            if col not in wf.columns:
+                result_cols[f"{prefix}_mean"] = pd.Series(np.nan, index=wf.index)
+                result_cols[f"{prefix}_tstat"] = pd.Series(np.nan, index=wf.index)
+                continue
+
+            series = wf[col]
+            rolling_mean = series.rolling(window=window, min_periods=min_periods).mean()
+            rolling_std = series.rolling(window=window, min_periods=min_periods).std(ddof=1)
+            rolling_count = series.rolling(window=window, min_periods=min_periods).count()
+
+            # t-stat = mean / (std / sqrt(n))
+            rolling_tstat = rolling_mean / (rolling_std / np.sqrt(rolling_count))
+
+            result_cols[f"{prefix}_mean"] = rolling_mean
+            result_cols[f"{prefix}_tstat"] = rolling_tstat
+
+        return pd.DataFrame(result_cols, index=wf.index)
 
     def get(self, key: str, default: object | None = None) -> object:
         return self._attrs.get(key, default)
@@ -480,8 +625,10 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "CVaR 95%": "Conditional Value at Risk at 95% confidence level (mean of returns below VaR). Less negative (closer to 0) is generally better; average loss when VaR is exceeded.",
     "Omega Ratio": "Probability-weighted ratio of gains above threshold vs losses below threshold (uses 0 as threshold). Higher is generally better; values >1 mean gains outweigh losses.",
     "Ulcer Index": "RMS (root mean square) of drawdowns, annualized. Lower is generally better; alternative drawdown-based risk measure that penalizes depth and duration.",
-    "Weight IC mean (next)": "Time-average cross-sectional correlation between weights at t and next-period asset returns (close-to-close), computed over the active universe (non-zero weights) each period.",
+    "Weight IC mean (next)": "Time-average cross-sectional Pearson correlation between weights at t and next-period asset returns (close-to-close), computed over the active universe (non-zero weights) each period.",
     "Weight IC t-stat (next)": "t-stat of the time series of per-period weight IC values. Higher absolute values suggest more statistically reliable alignment (not a guarantee).",
+    "Weight Rank IC mean (next)": "Time-average cross-sectional Spearman rank correlation between weights at t and next-period asset returns. More robust to outliers than Pearson IC.",
+    "Weight Rank IC t-stat (next)": "t-stat of the time series of per-period Rank IC values. Higher absolute values suggest more statistically reliable ranking alignment.",
     "Top-bottom decile spread mean (next)": "Time-average next-period return spread between the top and bottom weight deciles within the active universe (assets with non-zero weights) each period.",
     "Top-bottom decile spread t-stat (next)": "t-stat of the time series of top-minus-bottom decile spreads.",
     "Weighted long hit rate mean (next)": "Average fraction of long gross weight placed in assets that have positive next-period returns (weights within each period). Higher is generally better.",
@@ -491,6 +638,8 @@ TEARSHEET_NOTES: Final[dict[str, str]] = {
     "Forward return selection per gross t-stat (next)": "t-stat of the time series of per-period selection-per-gross values.",
     "Gross weight mean": "Average gross weight (Σ |w_t,i|) across periods with available next returns. Higher implies more leverage/total exposure in the signal.",
     "Directionality mean": "Average net-to-gross ratio (Σ w_t,i) / (Σ |w_t,i|). Values near 0 indicate market-neutral; positive is net long; negative net short.",
+    "Turnover-adjusted IC mean (next)": "IC adjusted for trading costs: IC × (1 - turnover × cost_per_turnover). Lower values indicate signal quality erodes significantly after costs.",
+    "Net forward return per gross mean (next)": "Forward return per gross minus estimated trading costs (turnover × cost_per_turnover). Negative values indicate costs exceed gross returns.",
 }
 
 _SENTENCE_SPLIT_RE: Final[re.Pattern[str]] = re.compile(r"(?<=[.!?])\s+")
@@ -611,6 +760,208 @@ def _alpha_decay_next_return_by_type(
 
     df = pd.DataFrame(rows).set_index(pd.Index([int(r["lag"]) for r in rows], name="Lag"))
     df = df.drop(columns=["lag"], errors="ignore")
+    return df
+
+
+def _signal_decay_multi_horizon(
+    *,
+    weights: pd.DataFrame,
+    close_prices: pd.DataFrame,
+    horizons: tuple[int, ...] | None = None,
+) -> pd.DataFrame:
+    """
+    Compute IC, Rank IC, and decile spread at multiple forward horizons.
+
+    Unlike `_alpha_decay_next_return_by_type` which lags weights to measure execution delay decay,
+    this function measures how predictive current weights are of returns at different forward horizons.
+
+    Args:
+        weights: Target weight DataFrame (index=time, columns=assets)
+        close_prices: Close prices DataFrame
+        horizons: Forward periods to compute (default: (1, 3, 5, 10, 21))
+
+    Returns:
+        DataFrame with index=horizon and columns:
+        - ic_mean, ic_tstat (Pearson correlation)
+        - rank_ic_mean, rank_ic_tstat (Spearman rank correlation)
+        - decile_spread_mean, decile_spread_tstat (top-bottom spread)
+    """
+    if horizons is None:
+        horizons = (1, 3, 5, 10, 21)
+
+    w = weights.fillna(0.0).astype(float)
+    w_np = w.to_numpy(dtype=float, copy=True)
+    n_periods = len(w.index)
+
+    rows: list[dict[str, object]] = []
+
+    for horizon in sorted(set(horizons)):
+        if horizon < 1 or horizon >= n_periods:
+            continue
+
+        # Forward returns at this horizon: close[t+h] / close[t] - 1
+        fwd = close_prices.shift(-horizon).divide(close_prices).subtract(1.0)
+        fwd = fwd.replace([np.inf, -np.inf], np.nan)
+        fwd_np = fwd.to_numpy(dtype=float, copy=True)
+
+        ic_values: list[float] = []
+        rank_ic_values: list[float] = []
+        spread_values: list[float] = []
+
+        for t in range(n_periods - horizon):
+            w_row = w_np[t]
+            r_row = fwd_np[t]
+            mask = np.isfinite(w_row) & np.isfinite(r_row) & (w_row != 0.0)
+            n_active = int(np.sum(mask))
+
+            if n_active < 2:
+                continue
+
+            w_m = w_row[mask]
+            r_m = r_row[mask]
+
+            # IC (Pearson)
+            if np.std(w_m) > 0.0 and np.std(r_m) > 0.0:
+                ic_values.append(float(np.corrcoef(w_m, r_m)[0, 1]))
+
+            # Rank IC (Spearman)
+            w_ranks = pd.Series(w_m).rank(method="average").to_numpy(dtype=float)
+            r_ranks = pd.Series(r_m).rank(method="average").to_numpy(dtype=float)
+            if np.std(w_ranks) > 0.0 and np.std(r_ranks) > 0.0:
+                rank_ic_values.append(float(np.corrcoef(w_ranks, r_ranks)[0, 1]))
+
+            # Decile spread
+            n = int(w_m.shape[0])
+            if n >= 10:
+                order = np.argsort(w_m, kind="mergesort")
+                r_sorted = r_m[order]
+                dec = (np.arange(n) * 10) // n
+                bottom = r_sorted[dec == 0]
+                top = r_sorted[dec == 9]
+                if bottom.size > 0 and top.size > 0:
+                    spread_values.append(float(np.mean(top) - np.mean(bottom)))
+
+        # Use empty arrays cautiously to avoid warnings
+        ic_arr = np.array(ic_values, dtype=float) if ic_values else np.array([])
+        rank_ic_arr = np.array(rank_ic_values, dtype=float) if rank_ic_values else np.array([])
+        spread_arr = np.array(spread_values, dtype=float) if spread_values else np.array([])
+
+        rows.append(
+            {
+                "horizon": horizon,
+                "ic_mean": float(np.mean(ic_arr)) if len(ic_arr) > 0 else np.nan,
+                "ic_tstat": _t_stat(pd.Series(ic_arr)) if len(ic_arr) > 0 else np.nan,
+                "rank_ic_mean": float(np.mean(rank_ic_arr)) if len(rank_ic_arr) > 0 else np.nan,
+                "rank_ic_tstat": _t_stat(pd.Series(rank_ic_arr)) if len(rank_ic_arr) > 0 else np.nan,
+                "decile_spread_mean": float(np.mean(spread_arr)) if len(spread_arr) > 0 else np.nan,
+                "decile_spread_tstat": _t_stat(pd.Series(spread_arr)) if len(spread_arr) > 0 else np.nan,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "ic_mean",
+                "ic_tstat",
+                "rank_ic_mean",
+                "rank_ic_tstat",
+                "decile_spread_mean",
+                "decile_spread_tstat",
+            ]
+        )
+
+    df = pd.DataFrame(rows).set_index("horizon")
+    df.index.name = "Horizon"
+    return df
+
+
+def _signal_by_asset(
+    *,
+    weights: pd.DataFrame,
+    close_prices: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Compute per-asset signal diagnostics.
+
+    For each asset, computes time-series correlation between that asset's weight
+    and its next-period return, along with hit rate and contribution metrics.
+
+    Returns:
+        DataFrame with index=asset and columns:
+        - ic_mean: Time-series correlation between asset weight and next-period return
+        - hit_rate: Fraction of periods where weight direction matches return direction
+        - avg_abs_weight: Average absolute weight for this asset
+        - alpha_contribution: Sum of (weight × return) for this asset
+        - alpha_contribution_pct: Percentage contribution to total portfolio alpha
+    """
+    w = weights.fillna(0.0).astype(float)
+    fwd = close_prices.shift(-1).divide(close_prices).subtract(1.0)
+    fwd = fwd.replace([np.inf, -np.inf], np.nan)
+
+    assets = list(w.columns)
+    results: list[dict[str, object]] = []
+    total_contribution = 0.0
+
+    # First pass: compute all metrics and total contribution
+    for asset in assets:
+        w_asset = w[asset].values
+        r_asset = fwd[asset].values if asset in fwd.columns else np.full(len(w_asset), np.nan)
+
+        # Valid periods: both weight non-zero and return available
+        valid = np.isfinite(w_asset) & np.isfinite(r_asset) & (w_asset != 0.0)
+        n_valid = int(np.sum(valid))
+
+        if n_valid < 3:
+            results.append(
+                {
+                    "asset": asset,
+                    "ic_mean": np.nan,
+                    "hit_rate": np.nan,
+                    "avg_abs_weight": np.nan,
+                    "alpha_contribution": np.nan,
+                }
+            )
+            continue
+
+        w_v = w_asset[valid]
+        r_v = r_asset[valid]
+
+        # Per-asset IC (time series correlation)
+        if np.std(w_v) > 0.0 and np.std(r_v) > 0.0:
+            ic_mean = float(np.corrcoef(w_v, r_v)[0, 1])
+        else:
+            ic_mean = np.nan
+
+        # Hit rate: weight direction matches return direction
+        correct = np.sign(w_v) == np.sign(r_v)
+        hit_rate = float(np.mean(correct))
+
+        # Average absolute weight
+        avg_abs_weight = float(np.mean(np.abs(w_v)))
+
+        # Alpha contribution: sum(w × r) for this asset
+        contrib = float(np.sum(w_v * r_v))
+        total_contribution += abs(contrib)
+
+        results.append(
+            {
+                "asset": asset,
+                "ic_mean": ic_mean,
+                "hit_rate": hit_rate,
+                "avg_abs_weight": avg_abs_weight,
+                "alpha_contribution": contrib,
+            }
+        )
+
+    # Second pass: compute percentage contribution
+    df = pd.DataFrame(results).set_index("asset")
+    if total_contribution > 0:
+        df["alpha_contribution_pct"] = (
+            df["alpha_contribution"].abs() / total_contribution * 100.0
+        ) * np.sign(df["alpha_contribution"])
+    else:
+        df["alpha_contribution_pct"] = np.nan
+
     return df
 
 
@@ -870,6 +1221,8 @@ def _metrics(
     slippage_paid: np.ndarray,
     positions_hist: np.ndarray,
     compute_signal_diagnostics: bool = True,
+    signal_decay_horizons: tuple[int, ...] | None = None,
+    signal_cost_per_turnover: float = 0.001,
 ) -> pd.DataFrame:
     """
     Build a metrics DataFrame from simulation outputs.
@@ -878,6 +1231,10 @@ def _metrics(
         compute_signal_diagnostics: If True, compute expensive signal diagnostics
             (weight IC, rank IC, decile analysis). Set to False for faster grid search
             when only basic metrics (Sharpe, returns, etc.) are needed.
+        signal_decay_horizons: Forward horizons for multi-horizon signal decay analysis.
+            If None, uses default (1, 3, 5, 10, 21).
+        signal_cost_per_turnover: Cost per unit turnover for turnover-adjusted metrics
+            (default: 0.001 = 10bps).
     """
 
     n_periods = int(len(returns))
@@ -1163,9 +1520,21 @@ def _metrics(
         "Ulcer Index": ulcer_index,
     }
     if compute_signal_diagnostics and not wf.empty:
+        # Compute turnover-adjusted metrics
+        # weight_turnover_ratio is per-period turnover aligned with wf index
+        wt_series = pd.Series(weight_turnover_ratio, index=weights.index)
+        # Align turnover with wf index (wf may have fewer periods due to forward return requirement)
+        wt_aligned = wt_series.reindex(wf.index)
+        # Turnover-adjusted IC: IC × (1 - turnover × cost)
+        turnover_adj_ic = wf["ic"] * (1.0 - wt_aligned * signal_cost_per_turnover)
+        # Net forward return per gross: forward_return - (turnover × cost)
+        net_fwd_per_gross = wf["forward_return_per_gross"] - wt_aligned * signal_cost_per_turnover
+
         metrics_weight_vs_next = {
             "Weight IC mean (next)": float(wf["ic"].mean(skipna=True)),
             "Weight IC t-stat (next)": _t_stat(wf["ic"]),
+            "Weight Rank IC mean (next)": float(wf["rank_ic"].mean(skipna=True)),
+            "Weight Rank IC t-stat (next)": _t_stat(wf["rank_ic"]),
             "Top-bottom decile spread mean (next)": float(wf["top_bottom_spread"].mean(skipna=True)),
             "Top-bottom decile spread t-stat (next)": _t_stat(wf["top_bottom_spread"]),
             "Weighted long hit rate mean (next)": float(wf["long_hit_weighted"].mean(skipna=True)),
@@ -1181,12 +1550,16 @@ def _metrics(
             ),
             "Gross weight mean": float(wf["gross_weight"].mean(skipna=True)),
             "Directionality mean": float(wf["directionality"].mean(skipna=True)),
+            "Turnover-adjusted IC mean (next)": float(turnover_adj_ic.mean(skipna=True)),
+            "Net forward return per gross mean (next)": float(net_fwd_per_gross.mean(skipna=True)),
         }
     else:
         # Signal diagnostics skipped - return NaN placeholders
         metrics_weight_vs_next = {
             "Weight IC mean (next)": np.nan,
             "Weight IC t-stat (next)": np.nan,
+            "Weight Rank IC mean (next)": np.nan,
+            "Weight Rank IC t-stat (next)": np.nan,
             "Top-bottom decile spread mean (next)": np.nan,
             "Top-bottom decile spread t-stat (next)": np.nan,
             "Weighted long hit rate mean (next)": np.nan,
@@ -1196,6 +1569,8 @@ def _metrics(
             "Forward return selection per gross t-stat (next)": np.nan,
             "Gross weight mean": np.nan,
             "Directionality mean": np.nan,
+            "Turnover-adjusted IC mean (next)": np.nan,
+            "Net forward return per gross mean (next)": np.nan,
         }
 
     # Build complete metrics with categories
@@ -1244,8 +1619,19 @@ def _metrics(
             close_prices=close_prices,
             max_lag=10,
         )
+        df.attrs["signal_decay_horizons"] = _signal_decay_multi_horizon(
+            weights=weights,
+            close_prices=close_prices,
+            horizons=signal_decay_horizons,
+        )
+        df.attrs["signal_by_asset"] = _signal_by_asset(
+            weights=weights,
+            close_prices=close_prices,
+        )
     else:
         df.attrs["alpha_decay_next_return_by_type"] = pd.DataFrame()
+        df.attrs["signal_decay_horizons"] = pd.DataFrame()
+        df.attrs["signal_by_asset"] = pd.DataFrame()
 
     # Trading Activity & Costs time series
     df.attrs["turnover"] = pd.Series(turnover_ratio, index=weights.index, name="turnover")

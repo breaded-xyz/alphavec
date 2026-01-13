@@ -153,6 +153,9 @@ class SimConfig:
     trading_days_year: int = 365
     risk_free_rate: float = 0.0
     compute_signal_diagnostics: bool = True
+    # Signal diagnostics configuration
+    signal_decay_horizons: tuple[int, ...] | None = None  # Default: (1, 3, 5, 10, 21)
+    signal_cost_per_turnover: float = 0.001  # 10bps for turnover-adjusted metrics
 
 
 def _to_frame(x: pd.DataFrame | pd.Series, name: str) -> pd.DataFrame:
@@ -589,6 +592,8 @@ def simulate(
         slippage_paid=run.slippage_paid,
         positions_hist=run.positions_hist,
         compute_signal_diagnostics=cfg.compute_signal_diagnostics,
+        signal_decay_horizons=cfg.signal_decay_horizons,
+        signal_cost_per_turnover=cfg.signal_cost_per_turnover,
     )
 
     metrics.attrs["returns"] = returns

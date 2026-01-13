@@ -547,6 +547,99 @@ def tearsheet(
             )
         )
 
+    # Multi-horizon signal decay (IC and decile spread by forward horizon)
+    decay_horizons = metrics.attrs.get("signal_decay_horizons")
+    if isinstance(decay_horizons, pd.DataFrame) and len(decay_horizons.index) > 0:
+        decay_h_num = decay_horizons.apply(pd.to_numeric, errors="coerce")
+        fig, axes = plt.subplots(1, 2, figsize=(12, 3.5))
+
+        x = decay_h_num.index.to_numpy(dtype=int)
+
+        # Left: IC decay
+        ax_ic = axes[0]
+        if "ic_mean" in decay_h_num.columns:
+            ax_ic.plot(x, decay_h_num["ic_mean"].to_numpy(dtype=float), marker="o", linewidth=2, label="IC")
+        if "rank_ic_mean" in decay_h_num.columns:
+            ax_ic.plot(x, decay_h_num["rank_ic_mean"].to_numpy(dtype=float), marker="s", linewidth=2, label="Rank IC")
+        ax_ic.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+        ax_ic.set_title("IC by Forward Horizon")
+        ax_ic.set_xlabel("Forward Horizon (periods)")
+        ax_ic.set_ylabel("Mean IC")
+        ax_ic.legend(loc="best")
+
+        # Right: Decile spread decay
+        ax_spread = axes[1]
+        if "decile_spread_mean" in decay_h_num.columns:
+            spread_pct = (decay_h_num["decile_spread_mean"] * 100.0).to_numpy(dtype=float)
+            ax_spread.plot(x, spread_pct, marker="o", linewidth=2, color="#2ca02c")
+        ax_spread.axhline(0.0, color="#999999", linestyle="--", linewidth=1)
+        ax_spread.set_title("Decile Spread by Forward Horizon")
+        ax_spread.set_xlabel("Forward Horizon (periods)")
+        ax_spread.set_ylabel("Mean Spread (%)")
+
+        plt.tight_layout()
+        signal_blocks.append(
+            _plot_block(
+                title="Signal: Multi-Horizon Decay",
+                fig=fig,
+                note=(
+                    "IC and top-bottom decile spread measured at different forward horizons (e.g., 1-day, 5-day, 21-day returns).",
+                    "Faster decay suggests short-lived alpha; stable values indicate structural predictive power. Use this to determine optimal rebalancing frequency.",
+                ),
+            )
+        )
+
+    # Per-asset signal breakdown
+    signal_by_asset = metrics.attrs.get("signal_by_asset")
+    if isinstance(signal_by_asset, pd.DataFrame) and len(signal_by_asset.index) > 0:
+        asset_num = signal_by_asset.apply(pd.to_numeric, errors="coerce")
+        # Sort by absolute contribution for display
+        if "alpha_contribution_pct" in asset_num.columns:
+            asset_num = asset_num.sort_values("alpha_contribution_pct", key=abs, ascending=False)
+
+        # Only show top 20 assets if many
+        if len(asset_num) > 20:
+            asset_num = asset_num.head(20)
+
+        fig, axes = plt.subplots(1, 2, figsize=(12, max(3.5, len(asset_num) * 0.25)))
+
+        # Left: IC and hit rate by asset
+        ax_ic = axes[0]
+        y_pos = np.arange(len(asset_num))
+        if "ic_mean" in asset_num.columns:
+            colors = ["#2ca02c" if v >= 0 else "#d62728" for v in asset_num["ic_mean"].fillna(0)]
+            ax_ic.barh(y_pos, asset_num["ic_mean"].fillna(0).to_numpy(), color=colors, alpha=0.7)
+        ax_ic.set_yticks(y_pos)
+        ax_ic.set_yticklabels(asset_num.index, fontsize=8)
+        ax_ic.axvline(0.0, color="#999999", linestyle="--", linewidth=1)
+        ax_ic.set_title("Per-Asset IC")
+        ax_ic.set_xlabel("IC Mean")
+        ax_ic.invert_yaxis()
+
+        # Right: Alpha contribution
+        ax_contrib = axes[1]
+        if "alpha_contribution_pct" in asset_num.columns:
+            colors = ["#2ca02c" if v >= 0 else "#d62728" for v in asset_num["alpha_contribution_pct"].fillna(0)]
+            ax_contrib.barh(y_pos, asset_num["alpha_contribution_pct"].fillna(0).to_numpy(), color=colors, alpha=0.7)
+        ax_contrib.set_yticks(y_pos)
+        ax_contrib.set_yticklabels(asset_num.index, fontsize=8)
+        ax_contrib.axvline(0.0, color="#999999", linestyle="--", linewidth=1)
+        ax_contrib.set_title("Alpha Contribution")
+        ax_contrib.set_xlabel("Contribution (%)")
+        ax_contrib.invert_yaxis()
+
+        plt.tight_layout()
+        signal_blocks.append(
+            _plot_block(
+                title="Signal: Per-Asset Breakdown",
+                fig=fig,
+                note=(
+                    "Per-asset IC (time-series correlation between weight and return) and alpha contribution.",
+                    "Identify which assets the signal works best on; consider excluding assets with negative IC or low contribution.",
+                ),
+            )
+        )
+
     # Deciles
     wf_deciles = metrics.attrs.get("weight_forward_deciles")
     wf_deciles_median = metrics.attrs.get("weight_forward_deciles_median")
