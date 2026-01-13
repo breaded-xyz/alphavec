@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "alphavec"
-version = "0.6.1"
+version = "0.6.5"
 description = "Fast minimalist vector-based simulation and grid search for perpetual futures."
 readme = "README.md"
 license = { file = "LICENSE" }
